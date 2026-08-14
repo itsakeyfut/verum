@@ -1,0 +1,17 @@
+error[E0277]: `((Unrelated, Unrelated), ())` cannot implement a sealed Verum trait
+  --> tests/ui/compile_fail/lookup_cannot_be_forged_at_depth.rs:20:59
+   |
+20 | impl verum::Lookup<IsPaid, verum::There<verum::Here>> for ((Unrelated, Unrelated), ()) {
+   |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not sealed by Verum
+   |
+   = help: the trait `verum::sealed::private::SealedLookup<IsPaid, There<Here>>` is not implemented for `((Unrelated, Unrelated), ())`
+   = note: Verum's sealed traits are implemented by Verum itself and by its derive macros. Writing the impl by hand grants something no declaration authorises, and nothing would report the difference.
+note: required by a bound in `Lookup`
+  --> src/typelevel.rs
+   |
+   | pub trait Lookup<K, Idx>: private::SealedLookup<K, Idx> {
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Lookup`
+   = note: `Lookup` is a "sealed trait", because to implement it you also need to implement `verum::sealed::private::SealedLookup`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   = help: the following types implement the trait:
+             ((K, V), T)
+             (X, T)

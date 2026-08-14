@@ -1,0 +1,13 @@
+error[E0277]: `NotAnIndex` is not a list index
+  --> tests/ui/compile_fail/index_bound_is_unsatisfied.rs:16:19
+   |
+16 |     needs_index::<NotAnIndex>();
+   |                   ^^^^^^^^^^ only `Here` and `There<I>` index a cons list
+   |
+   = help: the trait `verum::Index` is not implemented for `NotAnIndex`
+   = note: index positions are filled by inference — you should not need to name one
+note: required by a bound in `needs_index`
+  --> tests/ui/compile_fail/index_bound_is_unsatisfied.rs:13:19
+   |
+13 | fn needs_index<I: verum::Index>() {}
+   |                   ^^^^^^^^^^^^ required by this bound in `needs_index`

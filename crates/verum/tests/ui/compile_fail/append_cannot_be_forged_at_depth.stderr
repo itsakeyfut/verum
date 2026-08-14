@@ -1,0 +1,17 @@
+error[E0277]: `(NotAConsList, NotAConsList)` cannot implement a sealed Verum trait
+  --> tests/ui/compile_fail/append_cannot_be_forged_at_depth.rs:25:33
+   |
+25 | impl verum::Append<Granted> for (NotAConsList, NotAConsList) {
+   |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not sealed by Verum
+   |
+   = help: the trait `verum::sealed::private::SealedAppend<Granted>` is not implemented for `(NotAConsList, NotAConsList)`
+   = note: Verum's sealed traits are implemented by Verum itself and by its derive macros. Writing the impl by hand grants something no declaration authorises, and nothing would report the difference.
+note: required by a bound in `Append`
+  --> src/typelevel.rs
+   |
+   | pub trait Append<B>: private::SealedAppend<B> {
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Append`
+   = note: `Append` is a "sealed trait", because to implement it you also need to implement `verum::sealed::private::SealedAppend`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   = help: the following types implement the trait:
+             ()
+             (H, T)

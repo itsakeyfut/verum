@@ -1,0 +1,26 @@
+error[E0277]: `(A, B)` and `(C, ())` cannot be concatenated
+  --> tests/ui/compile_fail/append_malformed_operand.rs:65:38
+   |
+65 |     let _: core::marker::PhantomData<<Malformed as verum::Append<(C, ())>>::Out> =
+   |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ both sides must be well-formed effect sets
+   |
+   = help: the trait `Append<(C, ())>` is not implemented for `(A, B)`
+   = note: write `(A, (B, ()))` — a flat tuple `(A, B)` appears to work at exactly two elements and then breaks at three
+   = note: the empty set is `()`, and a single element is `(A, ())`
+
+error[E0277]: `(A, B)` cannot implement a sealed Verum trait
+  --> tests/ui/compile_fail/append_malformed_operand.rs:65:39
+   |
+65 |     let _: core::marker::PhantomData<<Malformed as verum::Append<(C, ())>>::Out> =
+   |                                       ^^^^^^^^^ not sealed by Verum
+   |
+   = help: the trait `verum::sealed::private::SealedAppend<(C, ())>` is not implemented for `(A, B)`
+   = note: Verum's sealed traits are implemented by Verum itself and by its derive macros. Writing the impl by hand grants something no declaration authorises, and nothing would report the difference.
+note: required by a bound in `verum::Append::Out`
+  --> src/typelevel.rs
+   |
+   | pub trait Append<B>: private::SealedAppend<B> {
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Append::Out`
+   |     /// The concatenation. Guaranteed to be a well-formed cons list.
+   |     type Out: ConsList;
+   |          --- required by a bound in this associated type

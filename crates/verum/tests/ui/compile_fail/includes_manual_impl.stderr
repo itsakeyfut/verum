@@ -4,11 +4,11 @@ error[E0277]: `User` cannot implement a sealed Verum trait
 10 | impl verum::Includes<Order> for User {}
    |                                 ^^^^ not sealed by Verum
    |
-   = help: the trait `verum::sealed::private::SealedIncludes<Order>` is not implemented for `User`
+   = help: the trait `verum::sealed::derive_facing::SealedIncludes<Order>` is not implemented for `User`
    = note: Verum's sealed traits are implemented by Verum itself and by its derive macros. Writing the impl by hand grants something no declaration authorises, and nothing would report the difference.
 note: required by a bound in `Includes`
   --> src/domain.rs
    |
-   | pub trait Includes<D>: private::SealedIncludes<D> {}
-   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Includes`
-   = note: `Includes` is a "sealed trait", because to implement it you also need to implement `verum::sealed::private::SealedIncludes`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   | pub trait Includes<D>: derive_facing::SealedIncludes<D> {}
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Includes`
+   = note: `Includes` is a "sealed trait", because to implement it you also need to implement `verum::sealed::derive_facing::SealedIncludes`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
