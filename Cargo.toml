@@ -38,6 +38,8 @@ undocumented_unsafe_blocks = "warn"
 # dependency resolution. See docs/rules/proc-macro.md §7.
 verum-macros = { version = "=0.0.0", path = "crates/verum-macros" }
 
+trybuild = "1.0.119"
+
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
 syn = { version = "3.0.3", features = ["full", "extra-traits"] }
