@@ -13,11 +13,16 @@
 //!
 //! Users depend on this crate alone. The derive and attribute macros live in a
 //! separate crate because a `proc-macro = true` crate cannot export anything
-//! else, and are re-exported here.
+//! else; `verum` depends on it and will re-export the macros here once they
+//! exist.
 
-// `verum-macros` exports nothing yet, so the glob re-export is currently empty
-// and rustc reports it as unused. The wiring is kept in place so that the macros
-// defined in T-M2-01 are reachable through `verum` without a further change.
-// Remove this `allow` as soon as the first macro exists.
-#[allow(unused_imports)]
-pub use verum_macros::*;
+// The `verum-macros` dependency is declared but not yet re-exported: the crate
+// defines no macros, so there is nothing to name. The re-export arrives with the
+// first macro in T-M2-01, in the named form required by
+// docs/rules/proc-macro.md §7:
+//
+//     pub use verum_macros::{contract, endpoint, Domain, ...};
+//
+// Do not restore a glob re-export. An empty `pub use verum_macros::*;` is
+// unreachable, so `unreachable_pub` rejects it and it can only be kept alive by
+// stacking `#[allow]`s on a line that exports nothing.

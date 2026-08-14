@@ -3,6 +3,7 @@ name = "verum-macros"
 description = "Derive and attribute macros for verum. Not intended to be depended on directly — use the `verum` crate"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 repository.workspace = true
 
 [lib]
@@ -12,3 +13,6 @@ proc-macro = true
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
+
+[lints]
+workspace = true
