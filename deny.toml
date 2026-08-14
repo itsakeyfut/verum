@@ -1,0 +1,89 @@
+# Verum — dependency policy, enforced by `cargo deny` in CI.
+#
+# WHY THIS EXISTS
+# ---------------
+# #5 established "no dependency carries an incompatible license" with a
+# point-in-time audit table in docs/dev/maintenance-tasks.md. That table dies on
+# contact with Phase 5 (tokio / hyper / tower / tower-http / axum) and Phase 7
+# (sqlx). A manual re-audit at each step is exactly the kind of guarantee that
+# silently stops being true, so the property is checked on every PR instead.
+#
+# cargo-deny allows **nothing** by default — measured: without this file it
+# rejects even Verum's own `MIT OR Apache-2.0`. So this guard fails closed: a
+# deleted or unparseable config makes the job red, never green.
+#
+# The version is pinned in .github/workflows/ci.yml. An unexpected key here is a
+# hard error in cargo-deny (it prints the valid key list), so schema drift is
+# loud rather than silently ignored — but it would still fail the job for a reason
+# unrelated to any dependency, hence the pin.
+
+[graph]
+# Features can gate dependencies. There are none today, but Phase 5's Axum
+# backend is the obvious first one, and a default-features-only run would then
+# check a graph the build does not use. Every command in CLAUDE.md already passes
+# --all-features for the same reason.
+all-features = true
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # unicode-ident is `(MIT OR Apache-2.0) AND Unicode-3.0` — an AND, so the
+    # Unicode obligation rides along whichever side of the OR is taken. It is
+    # permissive and compatible, but cargo-deny rejects it until it is allowed
+    # deliberately, which is the point: this entry is a decision, not a default.
+    # LICENSE-UNICODE ships in the repo to discharge it.
+    "Unicode-3.0",
+]
+
+# Measured, and the reason this line exists: without it a `GPL-3.0-only`
+# **dev**-dependency passes `cargo deny check licenses` cleanly. `[graph]
+# exclude-dev` does NOT control that — identical output either way, verified on
+# cargo-deny 0.16.4, 0.18.4 and 0.20.2. The audit this file replaces covered 23
+# dev packages (trybuild's tree), so omitting them would have made the automated
+# check narrower than the manual table it retires.
+include-dev = true
+include-build = true
+
+# An allow-list permitting licences nothing in the tree uses cannot be told apart
+# from one that is actually constraining something. At `deny`, dropping the last
+# crate under a licence forces this list to shrink in the same PR.
+#
+# Its limit, measured: it fires when a licence appears in **no** expression in the
+# graph, not when it was not *needed* to satisfy one. `Unlicense` would be accepted
+# here (memchr / termcolor / winapi-util are `Unlicense OR MIT`) even though MIT
+# already discharges them. So this keeps the list from listing licences the tree
+# has never seen; it does not prove the list is minimal.
+unused-allowed-license = "deny"
+
+[bans]
+# `warn`, not `deny`: there are no duplicates today, but Phase 5's tokio / hyper /
+# tower tree makes duplicate minor versions routine, and that is neither a licence
+# nor a supply-chain problem. Blocking on it would fail this job for a reason it
+# was not added to catch. Revisit when there is a real duplicate to judge.
+multiple-versions = "warn"
+multiple-versions-include-dev = true
+# A `*` requirement means the lockfile is the only thing pinning a dependency.
+# The version policy (.claude/commands/bump.md) pins verum-macros with `=`
+# precisely to avoid that, so a wildcard anywhere is a mistake.
+wildcards = "deny"
+
+[sources]
+# These two are NOT redundant with cargo-deny's defaults, which is what reading the
+# documentation would suggest. Measured: with this section absent, a git dependency
+# (`glob = { git = "..." }`) produces `warning[source-not-allowed]` and the check
+# still reports **`sources ok`** — so `cargo deny check sources` could not fail on
+# the one thing it is in the command for. Set explicitly, the same tree gives
+# `sources FAILED`.
+#
+# Why it matters beyond tidiness: a git dependency is outside the crates.io index,
+# so RUSTSEC advisories (which key on published versions) do not apply to it, and
+# there is no registry checksum behind the lockfile entry. It is the cheapest way
+# to route around everything else in this file.
+unknown-registry = "deny"
+unknown-git = "deny"
+
+# `[advisories]` is left on cargo-deny's defaults. Deliberately not tightened
+# `yanked` / `unmaintained` here: that step is non-blocking in ci.yml, so the
+# severity only changes whether a line reads `warning` or `error` in a log nobody
+# is gated on. Revisit if advisories ever becomes blocking.
