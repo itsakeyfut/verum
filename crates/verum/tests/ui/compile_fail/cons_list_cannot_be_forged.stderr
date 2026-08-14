@@ -1,0 +1,17 @@
+error[E0277]: `MySet` cannot implement a sealed Verum trait
+  --> tests/ui/compile_fail/cons_list_cannot_be_forged.rs:13:26
+   |
+13 | impl verum::ConsList for MySet {}
+   |                          ^^^^^ not sealed by Verum
+   |
+   = help: the trait `verum::sealed::private::SealedConsList` is not implemented for `MySet`
+   = note: Verum's sealed traits are implemented by Verum itself and by its derive macros. Writing the impl by hand grants something no declaration authorises, and nothing would report the difference.
+note: required by a bound in `ConsList`
+  --> src/typelevel.rs
+   |
+   | pub trait ConsList: private::SealedConsList {}
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `ConsList`
+   = note: `ConsList` is a "sealed trait", because to implement it you also need to implement `verum::sealed::private::SealedConsList`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   = help: the following types implement the trait:
+             ()
+             (H, T)

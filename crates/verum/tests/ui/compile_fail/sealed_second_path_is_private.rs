@@ -5,6 +5,6 @@
 //! one line to `pub use` would open it — and the other compile_fail case would
 //! not notice, because it names `verum::sealed::private` instead.
 
-use verum::private::Sealed;
+use verum::private::SealedIncludes;
 
 fn main() {}
