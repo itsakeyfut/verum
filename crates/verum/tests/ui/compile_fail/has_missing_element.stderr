@@ -1,0 +1,16 @@
+error[E0277]: `(A, (B, (C, ())))` does not contain `Undeclared`
+  --> tests/ui/compile_fail/has_missing_element.rs:18:23
+   |
+18 |     requires_member::<(A, (B, (C, ()))), Undeclared, _>();
+   |                       ^^^^^^^^^^^^^^^^^ `Undeclared` is not a member of this set
+   |
+   = help: the trait `Has<Undeclared, There<There<There<_>>>>` is not implemented for `(A, (B, (C, ())))`
+   = note: declare `Undeclared` in the contract, or remove the call that requires it
+note: required by a bound in `requires_member`
+  --> tests/ui/compile_fail/has_missing_element.rs:13:10
+   |
+11 | fn requires_member<Set, T, I>()
+   |    --------------- required by a bound in this function
+12 | where
+13 |     Set: verum::Has<T, I>,
+   |          ^^^^^^^^^^^^^^^^ required by this bound in `requires_member`

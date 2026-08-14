@@ -6,9 +6,11 @@
 //!
 //! # Status
 //!
-//! Early Phase 0. The sealing foundation, the cons list representation, and the
-//! index markers exist; membership (`Has`) follows in T-M0-08 and the contract
-//! DSL in Phase 2.
+//! Early Phase 0. The sealing foundation, the cons list representation, the index
+//! markers, and membership ([`Has`]) exist; the contract DSL follows in Phase 2.
+//!
+//! Nothing here is wired to a runtime yet, so these types verify shapes and
+//! membership but do not yet gate a real request path.
 //!
 //! # Layout
 //!
@@ -29,7 +31,7 @@ mod typelevel;
 pub(crate) use sealed::private;
 
 pub use domain::Includes;
-pub use typelevel::{ConsList, Here, Index, There};
+pub use typelevel::{ConsList, Has, Here, Index, There};
 
 // The `verum-macros` dependency is declared but not yet re-exported: the crate
 // defines no macros, so there is nothing to name. The re-export arrives with the
