@@ -162,6 +162,46 @@ jobs:
       - run: .github/scripts/check-api-boundary.sh public-api
 
   # --------------------------------------------------------------------------
+  # Dependency policy — deny.toml. #5 established the licence property with a
+  # point-in-time audit table; this is the permanent form, because that table
+  # dies at Phase 5 (tokio / hyper / tower / axum) and Phase 7 (sqlx).
+  #
+  # No toolchain *step* and no cache: nothing is compiled, so this answers in
+  # seconds. It still needs cargo on PATH — `cargo deny` is a cargo subcommand and
+  # resolves the graph through `cargo metadata` — which the runner image provides.
+  # If that ever stopped being true the step would fail loudly, not silently pass.
+  # --------------------------------------------------------------------------
+  deny:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # deny.toml before cargo-deny, because cargo-deny reports `ok` for whatever it
+      # was not configured to look at: a loosened config goes quiet rather than red.
+      # The guard's own spec runs first, so a guard that rejects everything — or
+      # nothing — cannot look healthy. Same pairing as the boundary job above.
+      - run: .github/scripts/check-deny-config-test.sh
+      - run: .github/scripts/check-deny-config.sh
+      # Pinned for the same reason cargo-public-api is: the config schema is
+      # version-specific. An unexpected key is a hard error in cargo-deny, so an
+      # unpinned upgrade would fail this job for a reason unrelated to any
+      # dependency. install-action ships a prebuilt binary, so unlike the
+      # public-api job there is no `cargo install` from source.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      # These three are decided by Cargo.lock alone, so they are deterministic
+      # and they block.
+      - run: cargo deny check licenses bans sources
+      # Advisories are not. They depend on an upstream database that changes
+      # without any PR, so a newly published RUSTSEC entry would redden a change
+      # that touched no dependency. Reported, not blocking — the same treatment,
+      # and the same reason, as the stable UI-test step above.
+      - name: Advisories (advisory — depends on an upstream database)
+        continue-on-error: true
+        run: cargo deny check advisories
+
+  # --------------------------------------------------------------------------
   # Aggregation gate: the single required check for branch protection. Passes
   # only if every job above succeeded. Referencing just this check keeps branch
   # protection stable as jobs are added or renamed.
@@ -176,6 +216,7 @@ jobs:
       - docs
       - boundary
       - public-api
+      - deny
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any dependency failed or was cancelled
