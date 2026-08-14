@@ -120,6 +120,46 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   # --------------------------------------------------------------------------
+  # Module boundary — where a forbidden crate may be named in the source at all.
+  # No toolchain, no cache: a checkout and a grep, so it answers in seconds and
+  # stays green even when nightly churn breaks the public-api job below.
+  # --------------------------------------------------------------------------
+  boundary:
+    name: Module boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # The guard's own spec: fixtures that must be rejected and fixtures that
+      # must be accepted. Without the second half, a guard that rejects
+      # everything would look healthy.
+      - run: .github/scripts/check-api-boundary-test.sh
+      - run: .github/scripts/check-api-boundary.sh imports
+
+  # --------------------------------------------------------------------------
+  # Public API — the check that buys the freedom to drop Axum later (ARK-001).
+  # Expose a foreign type once and it can never be removed, and the rule cannot
+  # be enforced by eye: types leak through return positions and trait bounds.
+  #
+  # This does not subsume the boundary job. `cargo public-api` renders
+  # `pub use axum::Router` as `pub use verum::Router`, erasing provenance, so
+  # re-exports are invisible here and only the grep above catches them.
+  #
+  # The nightly is pinned inside the script, along with the cargo-public-api
+  # version it must match — rustdoc JSON is unstable and the two travel together.
+  # rustup installs the pinned toolchain on first use.
+  # --------------------------------------------------------------------------
+  public-api:
+    name: Public API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-public-api
+        run: cargo install cargo-public-api --locked --version 0.52.0
+      - run: .github/scripts/check-api-boundary.sh public-api
+
+  # --------------------------------------------------------------------------
   # Aggregation gate: the single required check for branch protection. Passes
   # only if every job above succeeded. Referencing just this check keeps branch
   # protection stable as jobs are added or renamed.
@@ -132,6 +172,8 @@ jobs:
       - test
       - msrv
       - docs
+      - boundary
+      - public-api
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any dependency failed or was cancelled
