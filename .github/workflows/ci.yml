@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR/branch; never cancel pushes to main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Format check
+  # --------------------------------------------------------------------------
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  # --------------------------------------------------------------------------
+  # Clippy on the full feature set. The lint table lives in the workspace
+  # manifest (`[workspace.lints]`), so this also proves both crates opted in.
+  # --------------------------------------------------------------------------
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-features -- -D warnings
+
+  # --------------------------------------------------------------------------
+  # Tests. Once T-M0-10 lands, the `ui` target carries `test = false`, so
+  # `cargo test --workspace` never picks it up — UI tests run only where they
+  # are named explicitly. That is what keeps the judgement on the MSRV job.
+  # The advisory run below reports .stderr drift on new rustc without blocking:
+  # a mismatch here means the expectations will need regenerating when the MSRV
+  # is raised, not that this PR is wrong (T-M1-04 measures the drift).
+  # --------------------------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-features
+      - name: UI tests (advisory — MSRV is authoritative)
+        if: hashFiles('crates/verum/tests/ui.rs') != ''
+        continue-on-error: true
+        run: cargo test -p verum --test ui
+
+  # --------------------------------------------------------------------------
+  # MSRV: verify the workspace still compiles on the declared minimum
+  # (Cargo.toml `rust-version`). `check` only — clippy lints are version-
+  # specific and belong on the stable job.
+  #
+  # This job also owns the UI tests, which is Verum-specific. Compile errors
+  # are the specification here, and they carry cons lists and `There<There<..>>`
+  # index types whose wording drifts between rustc versions. Judging .stderr on
+  # a moving toolchain makes it churn for reasons unrelated to any change, so
+  # the judgement is pinned (docs/rules/test.md §1.4).
+  #
+  # Pinned to the exact patch rather than `1.85`, which resolves to the latest
+  # 1.85.x: determinism is the whole premise, and this verifies the declared
+  # floor literally.
+  #
+  # T-M0-10 (#10) must set `test = false` on the `[[test]] name = "ui"` target.
+  # Without it `cargo test --workspace` on the stable job runs these too — and
+  # that step blocks, which would defeat this split. It cannot be declared here
+  # because cargo fails manifest parsing while tests/ui.rs does not exist.
+  # --------------------------------------------------------------------------
+  msrv:
+    name: MSRV (1.85.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85.0"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-features
+      - name: UI tests (.stderr is judged here)
+        if: hashFiles('crates/verum/tests/ui.rs') != ''
+        run: cargo test -p verum --test ui
+
+  # --------------------------------------------------------------------------
+  # Docs — `cargo doc` with `-D warnings` catches doc warnings and broken
+  # intra-doc links before they reach main. RUSTDOCFLAGS is load-bearing, not
+  # decoration: broken links are a warn-by-default lint, so a plain `cargo doc`
+  # exits 0 and this job would catch nothing.
+  # --------------------------------------------------------------------------
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # --------------------------------------------------------------------------
+  # Aggregation gate: the single required check for branch protection. Passes
+  # only if every job above succeeded. Referencing just this check keeps branch
+  # protection stable as jobs are added or renamed.
+  # --------------------------------------------------------------------------
+  ci:
+    if: always()
+    needs:
+      - fmt
+      - clippy
+      - test
+      - msrv
+      - docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any dependency failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - name: Success
+        run: exit 0
