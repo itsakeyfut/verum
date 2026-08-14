@@ -1,0 +1,9 @@
+[package]
+name = "verum"
+description = "An AI-native semantic web framework: endpoints declare their contract, and implementations that violate it do not compile"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+verum-macros = { workspace = true }
