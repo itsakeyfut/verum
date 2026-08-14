@@ -5,7 +5,29 @@ resolver = "3"
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
+# Forced, not preferred: async closures (`ctx.when`) and
+# `#[diagnostic::do_not_recommend]` both stabilised in 1.85, and edition 2024
+# requires it. Raising this later is a breaking change — see
+# docs/rules/api-surface.md §7.
+rust-version = "1.85"
 repository = "https://github.com/itsakeyfut/verum"
+
+# Crates opt in with `[lints] workspace = true`.
+[workspace.lints.rust]
+# `forbid`, not `deny`: it cannot be silenced by a stray `#[allow]`, so relaxing
+# the policy always shows up in a diff. Verum sits on safe abstractions and
+# needs no `unsafe` of its own (docs/rules/unsafe.md).
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "warn"
+# The public API is what an AI reads; docs are a first-class artifact here.
+missing_docs = "warn"
+# Supports the Dependency Hiding Rule by catching unintended `pub`.
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+# `priority = -1` lets individual lints below override the group.
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
 
 [workspace.dependencies]
 # Pinned with `=` on purpose: generated code calls `::verum::` internals, so a
