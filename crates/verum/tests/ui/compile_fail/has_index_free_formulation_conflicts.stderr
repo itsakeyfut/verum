@@ -1,0 +1,8 @@
+error[E0119]: conflicting implementations of trait `NaiveHas<_>` for type `(_, _)`
+  --> tests/ui/compile_fail/has_index_free_formulation_conflicts.rs:21:1
+   |
+17 | impl<H, T> NaiveHas<H> for (H, T) {}
+   | --------------------------------- first implementation here
+...
+21 | impl<H, X, T> NaiveHas<H> for (X, T) where T: NaiveHas<H> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting implementation for `(_, _)`

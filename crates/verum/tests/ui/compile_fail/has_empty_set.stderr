@@ -1,0 +1,16 @@
+error[E0277]: `()` does not contain `Mutation`
+  --> tests/ui/compile_fail/has_empty_set.rs:22:23
+   |
+22 |     requires_member::<(), Mutation, _>();
+   |                       ^^ `Mutation` is not a member of this set
+   |
+   = help: the trait `Has<Mutation, _>` is not implemented for `()`
+   = note: declare `Mutation` in the contract, or remove the call that requires it
+note: required by a bound in `requires_member`
+  --> tests/ui/compile_fail/has_empty_set.rs:17:10
+   |
+15 | fn requires_member<Set, T, I>()
+   |    --------------- required by a bound in this function
+16 | where
+17 |     Set: verum::Has<T, I>,
+   |          ^^^^^^^^^^^^^^^^ required by this bound in `requires_member`

@@ -1,0 +1,19 @@
+error[E0283]: type annotations needed
+  --> tests/ui/compile_fail/has_duplicate_element.rs:20:5
+   |
+20 |     requires_member::<(A, (A, ())), A, _>();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot infer type of the type parameter `I` declared on the function `requires_member`
+   |
+   = note: multiple `impl`s satisfying `(A, (A, ())): Has<A, _>` found in the `verum` crate:
+           - impl<H, T> Has<H, Here> for (H, T)
+             where T: ConsList;
+           - impl<H, X, T, I> Has<H, There<I>> for (X, T)
+             where T: ConsList, I: verum::Index, T: Has<H, I>;
+note: required by a bound in `requires_member`
+  --> tests/ui/compile_fail/has_duplicate_element.rs:15:10
+   |
+13 | fn requires_member<Set, T, I>()
+   |    --------------- required by a bound in this function
+14 | where
+15 |     Set: verum::Has<T, I>,
+   |          ^^^^^^^^^^^^^^^^ required by this bound in `requires_member`

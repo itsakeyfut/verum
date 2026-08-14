@@ -35,8 +35,8 @@ fn assert_fixtures_present(dir: &str, floor: usize) {
 
 #[test]
 fn contract_violations_should_not_compile() {
-    assert_fixtures_present("tests/ui/compile_fail", 8);
-    assert_fixtures_present("tests/ui/pass", 2);
+    assert_fixtures_present("tests/ui/compile_fail", 15);
+    assert_fixtures_present("tests/ui/pass", 3);
 
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/compile_fail/*.rs");

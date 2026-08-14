@@ -80,6 +80,15 @@ pub(crate) mod private {
         /// Seals [`crate::Index`].
         SealedIndex
     }
+
+    seal! {
+        /// Seals [`crate::Has`].
+        ///
+        /// Parameterised by both the element and the index, mirroring `Has`
+        /// itself: sealing on `Self` alone would let one derive-generated impl
+        /// unlock membership for elements the contract never declared.
+        SealedHas<T, Idx>
+    }
 }
 
 #[cfg(test)]
