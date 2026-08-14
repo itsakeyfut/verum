@@ -1,8 +1,8 @@
 error[E0603]: module `private` is private
  --> tests/ui/compile_fail/sealed_second_path_is_private.rs:8:12
   |
-8 | use verum::private::Sealed;
-  |            ^^^^^^^  ------ trait `Sealed` is not publicly re-exported
+8 | use verum::private::SealedIncludes;
+  |            ^^^^^^^  -------------- trait `SealedIncludes` is not publicly re-exported
   |            |
   |            private module
   |

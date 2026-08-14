@@ -6,9 +6,9 @@
 //!
 //! # Status
 //!
-//! Early Phase 0. Only the sealing foundation and the first trait built on it
-//! exist; the type-level primitives follow in T-M0-07/08 and the contract DSL in
-//! Phase 2.
+//! Early Phase 0. The sealing foundation, the cons list representation, and the
+//! index markers exist; membership (`Has`) follows in T-M0-08 and the contract
+//! DSL in Phase 2.
 //!
 //! # Layout
 //!
@@ -19,12 +19,17 @@
 
 mod domain;
 mod sealed;
+mod typelevel;
 
-// Re-exported at crate level so every module writes the same `private::Sealed`
-// supertrait bound that docs/rules/api-surface.md §2 prescribes.
+// Re-exported at crate level so each module can name its own seal —
+// `private::SealedIncludes`, `private::SealedConsList`, … — in the supertrait
+// position that docs/rules/api-surface.md §2 prescribes. One seal per sealed
+// trait, deliberately: sharing one made rustc list every other sealed trait's
+// implementors in each error.
 pub(crate) use sealed::private;
 
 pub use domain::Includes;
+pub use typelevel::{ConsList, Here, Index, There};
 
 // The `verum-macros` dependency is declared but not yet re-exported: the crate
 // defines no macros, so there is nothing to name. The re-export arrives with the

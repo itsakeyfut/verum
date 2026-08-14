@@ -1,0 +1,14 @@
+error[E0277]: `(Order, Item)` is not a well-formed effect set
+  --> tests/ui/compile_fail/flat_tuple_is_not_a_cons_list.rs:14:27
+   |
+14 |     requires_effect_set::<(Order, Item)>();
+   |                           ^^^^^^^^^^^^^ effect sets are cons lists, not flat tuples
+   |
+   = help: the trait `ConsList` is not implemented for `(Order, Item)`
+   = note: write `(A, (B, ()))` — a flat tuple `(A, B)` appears to work at exactly two elements and then breaks at three
+   = note: the empty set is `()`, and a single element is `(A, ())`
+note: required by a bound in `requires_effect_set`
+  --> tests/ui/compile_fail/flat_tuple_is_not_a_cons_list.rs:11:27
+   |
+11 | fn requires_effect_set<L: verum::ConsList>() {}
+   |                           ^^^^^^^^^^^^^^^ required by this bound in `requires_effect_set`

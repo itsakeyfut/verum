@@ -1,0 +1,14 @@
+error[E0277]: `(A, (B, C))` is not a well-formed effect set
+  --> tests/ui/compile_fail/malformed_cons_list_tail.rs:14:27
+   |
+14 |     requires_effect_set::<(A, (B, C))>();
+   |                           ^^^^^^^^^^^ effect sets are cons lists, not flat tuples
+   |
+   = help: the trait `ConsList` is not implemented for `(A, (B, C))`
+   = note: write `(A, (B, ()))` — a flat tuple `(A, B)` appears to work at exactly two elements and then breaks at three
+   = note: the empty set is `()`, and a single element is `(A, ())`
+note: required by a bound in `requires_effect_set`
+  --> tests/ui/compile_fail/malformed_cons_list_tail.rs:11:27
+   |
+11 | fn requires_effect_set<L: verum::ConsList>() {}
+   |                           ^^^^^^^^^^^^^^^ required by this bound in `requires_effect_set`

@@ -22,7 +22,7 @@ use crate::private;
     label = "reaching `{D}` requires declaring it",
     note = "either add `{D}` to this endpoint's declared domains, or use a domain it already declares — do not implement `Includes` by hand, it is sealed"
 )]
-pub trait Includes<D>: private::Sealed<D> {}
+pub trait Includes<D>: private::SealedIncludes<D> {}
 
 #[cfg(test)]
 mod tests {
@@ -37,7 +37,7 @@ mod tests {
     //
     // `#[cfg(test)]` does not cross the crate boundary, so this creates no
     // god-mode constructor for downstream code (docs/rules/test.md §4).
-    impl private::Sealed<Order> for GetOrder {}
+    impl private::SealedIncludes<Order> for GetOrder {}
     impl Includes<Order> for GetOrder {}
 
     fn assert_includes<E: Includes<Order>>() {}

@@ -13,8 +13,13 @@
 /// primary test layer to zero coverage with CI fully green.
 ///
 /// This is the same failure the boundary guard already defends against — see the
-/// "empty scan" case in `check-api-boundary-test.sh`. The floor is deliberately
-/// a count, not a list: adding cases should not require touching it.
+/// "empty scan" case in `check-api-boundary-test.sh`.
+///
+/// The floor is a **count, kept at the current count**. An earlier version left
+/// it deliberately low so that adding cases need not touch it; at 3-of-6 that
+/// meant half the suite — including both of the cases added with it — could be
+/// deleted while CI stayed green (measured). Updating one number per new fixture
+/// is the cheaper side of that trade.
 fn assert_fixtures_present(dir: &str, floor: usize) {
     let found = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{dir} is unreadable: {e}"))
@@ -30,8 +35,8 @@ fn assert_fixtures_present(dir: &str, floor: usize) {
 
 #[test]
 fn contract_violations_should_not_compile() {
-    assert_fixtures_present("tests/ui/compile_fail", 3);
-    assert_fixtures_present("tests/ui/pass", 1);
+    assert_fixtures_present("tests/ui/compile_fail", 8);
+    assert_fixtures_present("tests/ui/pass", 2);
 
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/compile_fail/*.rs");
