@@ -6,8 +6,9 @@
 //!
 //! # Status
 //!
-//! Skeleton. No types are defined yet; the type-level primitives arrive in
-//! Phase 0 and the contract DSL in Phase 2.
+//! Early Phase 0. Only the sealing foundation and the first trait built on it
+//! exist; the type-level primitives follow in T-M0-07/08 and the contract DSL in
+//! Phase 2.
 //!
 //! # Layout
 //!
@@ -15,6 +16,15 @@
 //! separate crate because a `proc-macro = true` crate cannot export anything
 //! else; `verum` depends on it and will re-export the macros here once they
 //! exist.
+
+mod domain;
+mod sealed;
+
+// Re-exported at crate level so every module writes the same `private::Sealed`
+// supertrait bound that docs/rules/api-surface.md §2 prescribes.
+pub(crate) use sealed::private;
+
+pub use domain::Includes;
 
 // The `verum-macros` dependency is declared but not yet re-exported: the crate
 // defines no macros, so there is nothing to name. The re-export arrives with the

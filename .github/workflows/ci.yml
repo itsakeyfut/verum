@@ -48,9 +48,9 @@ jobs:
       - run: cargo clippy --workspace --all-features -- -D warnings
 
   # --------------------------------------------------------------------------
-  # Tests. Once T-M0-10 lands, the `ui` target carries `test = false`, so
-  # `cargo test --workspace` never picks it up — UI tests run only where they
-  # are named explicitly. That is what keeps the judgement on the MSRV job.
+  # Tests. The `ui` target carries `test = false`, so `cargo test --workspace`
+  # never picks it up — UI tests run only where they are named explicitly. That
+  # is what keeps the judgement on the MSRV job.
   # The advisory run below reports .stderr drift on new rustc without blocking:
   # a mismatch here means the expectations will need regenerating when the MSRV
   # is raised, not that this PR is wrong (T-M1-04 measures the drift).
@@ -64,7 +64,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --all-features
       - name: UI tests (advisory — MSRV is authoritative)
-        if: hashFiles('crates/verum/tests/ui.rs') != ''
         continue-on-error: true
         run: cargo test -p verum --test ui
 
@@ -83,10 +82,11 @@ jobs:
   # 1.85.x: determinism is the whole premise, and this verifies the declared
   # floor literally.
   #
-  # T-M0-10 (#10) must set `test = false` on the `[[test]] name = "ui"` target.
-  # Without it `cargo test --workspace` on the stable job runs these too — and
-  # that step blocks, which would defeat this split. It cannot be declared here
-  # because cargo fails manifest parsing while tests/ui.rs does not exist.
+  # This step is also the ONLY thing that enforces the dev-dependency MSRV:
+  # `cargo check` above does not build dev-dependencies, so a trybuild release
+  # requiring a newer rustc passes the check step and fails only here. It must
+  # therefore stay unconditional — an `if:` guard would turn "the harness went
+  # missing" and "the dev-deps outgrew the MSRV" into silent skips.
   # --------------------------------------------------------------------------
   msrv:
     name: MSRV (1.85.0)
@@ -99,7 +99,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-features
       - name: UI tests (.stderr is judged here)
-        if: hashFiles('crates/verum/tests/ui.rs') != ''
         run: cargo test -p verum --test ui
 
   # --------------------------------------------------------------------------

@@ -1,0 +1,13 @@
+error[E0603]: module `sealed` is private
+ --> tests/ui/compile_fail/sealed_module_is_private.rs:6:12
+  |
+6 | use verum::sealed::private::Sealed;
+  |            ^^^^^^           ------ trait `Sealed` is not publicly re-exported
+  |            |
+  |            private module
+  |
+note: the module `sealed` is defined here
+ --> src/lib.rs
+  |
+  | mod sealed;
+  | ^^^^^^^^^^

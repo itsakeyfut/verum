@@ -10,5 +10,16 @@ license.workspace = true
 [dependencies]
 verum-macros = { workspace = true }
 
+[dev-dependencies]
+trybuild = { workspace = true }
+
+# `test = false` keeps the UI tests out of the bulk `cargo test` run. CI names
+# this target explicitly so that .stderr is judged only on the pinned MSRV job
+# (docs/rules/test.md §1.4) — without it the stable `test` job would also run
+# them, and it blocks, so wording drift on a new rustc would stop unrelated PRs.
+[[test]]
+name = "ui"
+test = false
+
 [lints]
 workspace = true

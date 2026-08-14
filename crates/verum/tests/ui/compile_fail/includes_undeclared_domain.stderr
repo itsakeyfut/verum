@@ -1,0 +1,13 @@
+error[E0277]: `GetUser` does not declare the domain `Order`
+  --> tests/ui/compile_fail/includes_undeclared_domain.rs:14:21
+   |
+14 |     reaches_order::<GetUser>();
+   |                     ^^^^^^^ reaching `Order` requires declaring it
+   |
+   = help: the trait `Includes<Order>` is not implemented for `GetUser`
+   = note: either add `Order` to this endpoint's declared domains, or use a domain it already declares — do not implement `Includes` by hand, it is sealed
+note: required by a bound in `reaches_order`
+  --> tests/ui/compile_fail/includes_undeclared_domain.rs:11:21
+   |
+11 | fn reaches_order<E: verum::Includes<Order>>() {}
+   |                     ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `reaches_order`
