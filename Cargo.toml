@@ -31,6 +31,16 @@ unreachable_pub = "warn"
 # `priority = -1` lets individual lints below override the group.
 all = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "warn"
+# Enforces the logging policy (docs/rules/logging.md); the list lives in
+# `clippy.toml`. `forbid`, not `deny`, for the same reason as `unsafe_code` above:
+# measured, a stray `#[allow(clippy::disallowed_macros)]` silences this completely at
+# `deny`, whereas at `forbid` it is a hard error (E0453). Relaxing the policy has to
+# happen here, in a diff.
+disallowed_macros = "forbid"
+# Same policy, different lint: `write!(std::io::stdout(), ..)` expands to `std::write`,
+# which `disallowed_macros` cannot ban because `write!` is legitimate in every
+# `Display` / `Debug` impl. The function that hands out the stream is what to catch.
+disallowed_methods = "forbid"
 
 [workspace.dependencies]
 # Pinned with `=` on purpose: generated code calls `::verum::` internals, so a

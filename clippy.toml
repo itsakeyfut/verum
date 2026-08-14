@@ -1,0 +1,38 @@
+# Verum — clippy configuration.
+#
+# `disallowed-macros` enforces the logging policy in `docs/rules/logging.md`
+# mechanically rather than by convention. The lint is set to **forbid** in
+# `[workspace.lints.clippy]`, which makes a stray `#[allow]` a hard error
+# (E0453) — the same treatment, and for the same recorded reason, as
+# `unsafe_code = "forbid"`.
+#
+# Why a lint rather than a grep in CI: it matches macro *paths*, so `std::println!`,
+# an import, or reformatting cannot evade it, and the `reason` below reaches whoever
+# hit it. Three text-scanning guards added in #9 were each walked around by exactly
+# those means.
+#
+# `reason` is not decoration. An AI that trips this needs to learn the policy, not
+# just the lint name — the same argument `docs/specs/diagnostics.md` makes about
+# every other error Verum shows on purpose.
+disallowed-macros = [
+    { path = "std::println", reason = "Verum is a library: use tracing with an explicit target (docs/rules/logging.md)" },
+    { path = "std::eprintln", reason = "Verum is a library: use tracing with an explicit target (docs/rules/logging.md)" },
+    { path = "std::print", reason = "Verum is a library: use tracing with an explicit target (docs/rules/logging.md)" },
+    { path = "std::eprint", reason = "Verum is a library: use tracing with an explicit target (docs/rules/logging.md)" },
+    # Not named by the issue, included deliberately: `dbg!` is the debug output most
+    # likely to be left behind, and logging.md says none may survive in verum-macros.
+    { path = "std::dbg", reason = "leftover debug output; remove it or use tracing with an explicit target (docs/rules/logging.md)" },
+]
+
+# The macro list above is not sufficient on its own. Found by trying to walk around it:
+# `write!(std::io::stdout(), "x")`, `writeln!(std::io::stderr(), "x")` and
+# `std::io::stdout().write_all(b"x")` all bypassed it, because the macro being expanded
+# is `std::write` — and `write!` cannot be banned, since every `Display` / `Debug` impl
+# uses it.
+#
+# So the stream-acquiring functions are what to disallow. Measured: this catches all
+# four bypass shapes, and `write!(f, ..)` inside a `Display` impl is *not* flagged.
+disallowed-methods = [
+    { path = "std::io::stdout", reason = "Verum is a library: do not write to the console (docs/rules/logging.md)" },
+    { path = "std::io::stderr", reason = "Verum is a library: do not write to the console (docs/rules/logging.md)" },
+]
