@@ -1,0 +1,11 @@
+/target/
+
+# Spec private docs
+docs/ 
+
+# Private local files
+TODO.md
+
+# AI private settings
+.claude/
+CLAUDE.md
