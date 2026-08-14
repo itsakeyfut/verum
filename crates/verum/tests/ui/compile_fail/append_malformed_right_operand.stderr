@@ -1,0 +1,9 @@
+error[E0277]: `()` and `(C, D)` cannot be concatenated
+  --> tests/ui/compile_fail/append_malformed_right_operand.rs:31:38
+   |
+31 |     let _: core::marker::PhantomData<<(A, (B, ())) as verum::Append<Right>>::Out> =
+   |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ both sides must be well-formed effect sets
+   |
+   = help: the trait `Append<(C, D)>` is not implemented for `()`
+   = note: write `(A, (B, ()))` — a flat tuple `(A, B)` appears to work at exactly two elements and then breaks at three
+   = note: the empty set is `()`, and a single element is `(A, ())`

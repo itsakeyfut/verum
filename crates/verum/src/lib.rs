@@ -28,10 +28,10 @@ mod typelevel;
 // position that docs/rules/api-surface.md §2 prescribes. One seal per sealed
 // trait, deliberately: sharing one made rustc list every other sealed trait's
 // implementors in each error.
-pub(crate) use sealed::private;
+pub(crate) use sealed::{derive_facing, private};
 
 pub use domain::Includes;
-pub use typelevel::{ConsList, Has, Here, Index, There};
+pub use typelevel::{Append, ConsList, Has, Here, Index, Lookup, There};
 
 // The `verum-macros` dependency is declared but not yet re-exported: the crate
 // defines no macros, so there is nothing to name. The re-export arrives with the

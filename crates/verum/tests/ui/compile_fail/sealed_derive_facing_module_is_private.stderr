@@ -1,0 +1,13 @@
+error[E0603]: module `derive_facing` is private
+  --> tests/ui/compile_fail/sealed_derive_facing_module_is_private.rs:20:12
+   |
+20 | use verum::derive_facing::SealedIncludes;
+   |            ^^^^^^^^^^^^^  -------------- trait `SealedIncludes` is not publicly re-exported
+   |            |
+   |            private module
+   |
+note: the module `derive_facing` is defined here
+  --> src/lib.rs
+   |
+   | pub(crate) use sealed::{derive_facing, private};
+   |                         ^^^^^^^^^^^^^

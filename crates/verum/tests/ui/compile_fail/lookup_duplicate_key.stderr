@@ -1,0 +1,19 @@
+error[E0283]: type annotations needed
+  --> tests/ui/compile_fail/lookup_duplicate_key.rs:31:5
+   |
+31 |     lookup::<DuplicatedCondition, IsPaid, _>();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot infer type of the type parameter `I` declared on the function `lookup`
+   |
+   = note: multiple `impl`s satisfying `((IsPaid, FirstScope), ((IsPaid, SecondScope), ())): Lookup<IsPaid, _>` found in the `verum` crate:
+           - impl<K, V, T> Lookup<K, Here> for ((K, V), T)
+             where T: ConsList;
+           - impl<K, X, T, I> Lookup<K, There<I>> for (X, T)
+             where T: Lookup<K, I>;
+note: required by a bound in `lookup`
+  --> tests/ui/compile_fail/lookup_duplicate_key.rs:26:10
+   |
+24 | fn lookup<Map, K, I>()
+   |    ------ required by a bound in this function
+25 | where
+26 |     Map: verum::Lookup<K, I>,
+   |          ^^^^^^^^^^^^^^^^^^^ required by this bound in `lookup`
