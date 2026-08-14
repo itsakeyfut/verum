@@ -11,6 +11,9 @@ edition = "2024"
 # docs/rules/api-surface.md §7.
 rust-version = "1.85"
 repository = "https://github.com/itsakeyfut/verum"
+# The Rust ecosystem default. Settled now rather than after outside
+# contributors arrive, when it would need everyone's agreement to change.
+license = "MIT OR Apache-2.0"
 
 # Crates opt in with `[lints] workspace = true`.
 [workspace.lints.rust]
