@@ -1,0 +1,26 @@
+[package]
+name = "separate-repo"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+app.workspace = true
+fw.workspace = true
+sqlx.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[features]
+# P5: name UserRepr from another crate.
+p5-name-repr = []
+# P10-P12: the third alternative — Repr public, fields private.
+p10-load = ["app/p10-pub-repr"]
+p11-forge-pub-repr = ["app/p10-pub-repr"]
+p12-macro-pub-repr = ["app/p10-pub-repr"]
+p14-projection = ["app/p14-hidden-module-repr"]
+p15-forge-via-select = ["app/p10-pub-repr"]

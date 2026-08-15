@@ -1,0 +1,35 @@
+[package]
+name = "app"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fw.workspace = true
+mac = { path = "../mac" }
+sqlx.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+# One feature per probe, all off by default, so the default build is the design
+# as the specs describe it and each probe is named in run.sh's output.
+[features]
+p2-from-repr = []
+p3-as-repr = []
+p4-direct-field = []
+p6-flat-as-repr = []
+p7-private-repr-fields = []
+p9-trait-from-repr = []
+p10-pub-repr = []
+p13-pub-crate-inner = []
+p4b-same-module-assign = []
+p14-hidden-module-repr = []
+p16-derive-newtype = []
+p17-derive-repr-only = []
+p18-newtype-named-field = []
+p19-flat-cached-repr = []
+p20-repr-debug-clone = []
