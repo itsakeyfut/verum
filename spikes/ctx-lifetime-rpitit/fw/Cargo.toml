@@ -1,0 +1,26 @@
+[package]
+name = "fw"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+
+# One feature, and only because probe F1's subject is a signature that cannot be
+# implemented *inside the framework* — `app` cannot host it, since `Ctx::new` is
+# `pub(crate)` (which is probe A0). Every other candidate shape for #39 and #40
+# is offered as an *additional type or method* (`RepoLt`, `RepoPhantom`,
+# `when_named`, `spawn_owned`) rather than as a cfg'd redefinition, so a
+# feature-name typo cannot silently leave the framework half of a probe
+# uncompiled. `unexpected_cfgs = "deny"` from the workspace covers the one below.
+[features]
+f1-spec-spawn = []

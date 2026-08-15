@@ -1,0 +1,61 @@
+# T-M1-02 / #14 — spike: `Ctx<'req, E>` × RPITIT / hyper / async closure.
+#
+# An INDEPENDENT workspace, but NOT for the reason `domain-opacity-sqlx` is one.
+# That distinction matters enough to write down, because it is the kind of thing
+# that gets flattened into "spikes are independent" on the next reading.
+#
+#   domain-opacity-sqlx was FORCED out: sqlx 0.9.0 declares
+#   `rust-version = 1.94.0` against Verum's MSRV of 1.85, so it cannot be a
+#   member at all.
+#
+#   This one is a CHOICE. Measured: tokio 1.53.1, hyper 1.11.0 and
+#   hyper-util 0.1.20 all build on 1.85.0; the highest `rust-version` anywhere
+#   in the tree is 1.71, over 30 packages (28 of them dependencies; 21 are not
+#   already in the root graph). Membership would work.
+#
+# It is declined because membership would put 21 further packages into the production
+# dependency graph — root `Cargo.lock`, `deny.toml`'s licence scan, every CI
+# job's build time — to obtain a verdict. `verum` takes these dependencies in
+# M3, deliberately, in an issue about that.
+#
+# The `[workspace]` table is what keeps it independent: without it cargo refuses
+# to build a package that sits inside the root workspace directory but is absent
+# from its `members`.
+[workspace]
+resolver = "3"
+members = ["fw", "app"]
+
+[workspace.package]
+edition = "2024"
+# Set here and asserted by run.sh, unlike the sqlx spike where the MSRV was
+# unreachable anyway. The `tokio::spawn` rejection text recorded by this spike
+# seeds an M3 UI test, and `docs/rules/test.md` §1.4 judges `.stderr` on 1.85.0
+# — a text captured on a newer rustc would be the wrong specification.
+rust-version = "1.85"
+publish = false
+
+# `#![deny(unexpected_cfgs)]` in a lib.rs does NOT reach that package's
+# integration-test crates, so a feature-name typo would leave a probe silently
+# uncompiled and still green (`docs/rules/test.md` §9 rule 4, measured in #13).
+# A package-level lint does reach them, and unlike RUSTFLAGS it does not judge
+# tokio's and hyper's dependencies.
+[workspace.lints.rust]
+unexpected_cfgs = "deny"
+
+[workspace.dependencies]
+# Not pinned. The verdict is version-dependent, so run.sh prints the versions it
+# actually measured — a future divergence should surface as a changed number
+# rather than silently.
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "time",
+    "sync",
+] }
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server"] }
+http-body-util = "0.1"
+bytes = "1"
+
+fw = { path = "fw" }
