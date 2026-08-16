@@ -42,9 +42,11 @@
 /// plain `pub trait SealedX {}` in this module compiles and passes the lint
 /// table (measured). What forbids it is
 /// [`tests::seals_should_only_be_declared_through_the_macro`], which reads
-/// this file and rejects any `pub trait` outside the macro template. Only
-/// doc comments pass through `$attr`, so a caller cannot override the
-/// mandated diagnostic either.
+/// **every source file** and rejects a `pub trait` declared inside a
+/// non-`pub` module — that being what "used as a seal" means structurally.
+/// (Until #32 it read only this file, so a hand-rolled seal anywhere else
+/// passed unnoticed.) Only doc comments pass through `$attr`, so a caller
+/// cannot override the mandated diagnostic either.
 ///
 /// The wording is deliberately generic: it fires for hand-written impls of
 /// any sealed trait, including ones that have nothing to do with contracts.
@@ -181,8 +183,31 @@ mod tests {
     /// `seal! { VerumOnlyGuard }` is a seal too — measured: with a name-based
     /// scan, a blanket `impl<T> private::VerumOnlyGuard for T {}` needed no
     /// marker and the suite stayed green.
+    ///
+    /// **Every source file, not `include_str!("sealed.rs")`** (`docs/rules/test.md`
+    /// §9 rule 7). Reading one file is correct *by placement* today, because
+    /// `macro_rules! seal` is not exported and so is textually confined here —
+    /// and that is exactly the dependency the rule forbids. The day someone adds
+    /// `pub(crate) use seal;`, the name set silently stops covering the new
+    /// seals, and `every_seal_impl_should_declare_whether_it_mirrors_its_trait`
+    /// stops checking their impls with nothing going red.
     fn declared_seals() -> Vec<String> {
-        let src = include_str!("sealed.rs");
+        let mut names = Vec::new();
+        for path in source_files() {
+            let src = std::fs::read_to_string(&path).expect("unreadable source");
+            names.extend(seal_names_in(&src));
+        }
+        assert!(
+            names.len() >= 6,
+            "found only {} seal declarations — the `seal! {{` scan has drifted",
+            names.len()
+        );
+        names
+    }
+
+    /// The `seal!`-declared names in one source, as a pure function so it can be
+    /// unit-tested against a known input instead of only against the real tree.
+    fn seal_names_in(src: &str) -> Vec<String> {
         let mut names = Vec::new();
         let mut in_seal = false;
         for line in src.lines() {
@@ -201,12 +226,88 @@ mod tests {
                 in_seal = false;
             }
         }
-        assert!(
-            names.len() >= 6,
-            "found only {} seal declarations — the `seal! {{` scan has drifted",
-            names.len()
-        );
         names
+    }
+
+    /// The names `lib.rs` re-exports, i.e. the traits a downstream crate can
+    /// actually name.
+    ///
+    /// **This is the property that matters, and deriving it is the whole point.**
+    /// An earlier version of this guard asked "is this `pub trait` inside a
+    /// non-`pub` module?" — which sounds equivalent and is not. `lib.rs` declares
+    /// `mod domain; mod sealed; mod typelevel;`, all private, so *every* file
+    /// scope in this crate is already inside a non-`pub` module. What makes
+    /// `ConsList` and friends public is the `pub use` below, nothing else.
+    /// Measured: six working seals — a private module in its own file, a
+    /// file-scope `pub trait`, `pub(super) mod`, and three more — passed that
+    /// predicate green, and a downstream crate compiled the forgeries.
+    fn reexported_names() -> Vec<String> {
+        let src = include_str!("lib.rs");
+        let mut out = Vec::new();
+        for line in src.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("pub use ") else {
+                continue;
+            };
+            for part in rest
+                .trim_end_matches(';')
+                .split(['{', '}', ',', ':'])
+                .flat_map(|p| p.rsplit("::"))
+            {
+                let p = part.trim();
+                if !p.is_empty() && p.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    out.push(p.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// The trait name a `pub trait` line declares, if the line declares one.
+    ///
+    /// Returns `None` for the `seal!` template (`pub trait $name …`), because
+    /// `$name` is not an identifier. That is deliberate: an earlier version
+    /// skipped any line *containing* the text `$name`, and a seven-character
+    /// trailing comment — `pub trait Forgeable {} // $name` — turned the whole
+    /// guard off (measured). Reading the declaration instead of the line leaves
+    /// nothing for a comment to influence.
+    fn declared_pub_trait(line: &str) -> Option<&str> {
+        let rest = line.trim_start().strip_prefix("pub trait ")?;
+        let name: &str = rest
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()?;
+        let mut chars = name.chars();
+        match chars.next() {
+            Some(c) if c.is_alphabetic() || c == '_' => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The hand-rolled seals in one source, as a pure function.
+    ///
+    /// **A seal is a `pub trait` that is neither declared through [`seal!`] nor
+    /// re-exported by `lib.rs`.** Everything reachable downstream is in
+    /// [`reexported_names`]; everything with a diagnostic floor is in
+    /// [`declared_seals`]. A `pub trait` in neither set is unreachable from
+    /// outside the crate *and* carries no floor — which is exactly what makes a
+    /// trait usable as a seal, and is the property `docs/rules/api-surface.md`
+    /// §2 cares about.
+    ///
+    /// Both sets come from the **declaration side** — `seal!` invocations and
+    /// `pub use` lines — as `docs/rules/test.md` §9 **rule 7** requires. No
+    /// module nesting is tracked, no column is assumed, and no substring of the
+    /// line can influence the verdict.
+    fn handrolled_seals_in(name: &str, src: &str, allowed: &[String]) -> Vec<String> {
+        let mut out = Vec::new();
+        for (i, line) in src.lines().enumerate() {
+            let Some(declared) = declared_pub_trait(line) else {
+                continue;
+            };
+            if allowed.iter().any(|a| a == declared) {
+                continue;
+            }
+            out.push(format!("{name}:{}: {}", i + 1, line.trim_start()));
+        }
+        out
     }
 
     /// Impl headers, with rustfmt's line wrapping undone.
@@ -237,22 +338,61 @@ mod tests {
     ///
     /// Scans every source file, not just this one: a bare seal declared inside a
     /// `pub(crate) mod` in another file would otherwise skip the floor entirely.
+    ///
+    /// **It did exactly that until #32.** The loop below walked `source_files()`
+    /// and then kept only `sealed.rs`, so the traversal was decorative and this
+    /// comment described an intent the code did not have. Measured: a
+    /// `pub(crate) mod handrolled { pub trait MySeal {} }` in `domain.rs`, with a
+    /// wide-open `impl<T> handrolled::MySeal for T {}`, left the suite at 12/12.
+    ///
+    /// That is the *fourth* instance of one class — `include_str!` on one file,
+    /// then a non-recursive `read_dir`, then a bare seal in a subdirectory, then
+    /// this. `docs/rules/test.md` §9 **rule 7** is where the class is written
+    /// down: *everywhere a set of files is enumerated, recurse into directories,
+    /// derive the target names from the declaration side, and forbid aliases.*
     #[test]
     fn seals_should_only_be_declared_through_the_macro() {
+        let files = source_files();
+        // Assert the work happened, not that no error appeared. Without this the
+        // guard passes when the scan reads nothing — measured: filtering
+        // `source_files()` to a nonexistent extension left it green, and only a
+        // *sibling* guard's floor noticed. `docs/rules/test.md` §9's headline.
+        assert!(
+            files.len() >= 4,
+            "only {} source files scanned — the walk has drifted",
+            files.len()
+        );
+        // Anything with a diagnostic floor, plus anything a downstream crate can
+        // already name. Both derived, neither hardcoded.
+        let mut allowed = declared_seals();
+        allowed.extend(reexported_names());
+
         let mut strays: Vec<String> = Vec::new();
-        for path in source_files() {
-            let src = std::fs::read_to_string(&path).expect("unreadable source");
-            let name = path.display().to_string();
-            for (i, line) in src.lines().enumerate() {
-                let t = line.trim_start();
-                if t.starts_with("pub trait") && !t.contains("$name") {
-                    // A public trait outside `seal!` is fine unless it is being used
-                    // as a seal, which is what living in a `private`-ish module means.
-                    if name.ends_with("sealed.rs") {
-                        strays.push(format!("{name}:{}: {t}", i + 1));
-                    }
-                }
+        for path in &files {
+            // `source_files()` walks `src/`. A `#[path = "../gen/x.rs"] mod x;`
+            // puts a module's body somewhere the walk never opens, so assert the
+            // escape hatch is unused rather than trying to follow it. Cheap, and
+            // it fails loudly the day `build.rs` / `OUT_DIR` code arrives.
+            // Matched at the start of a trimmed line, not as a substring: the
+            // substring form reports this very comment, which is the
+            // reporting-on-itself hazard this file records twice already.
+            let src_check = std::fs::read_to_string(path).expect("unreadable source");
+            if let Some(line_no) = src_check
+                .lines()
+                .position(|l| l.trim_start().starts_with("#[path"))
+            {
+                panic!(
+                    "{}:{}: `#[path]` moves a module body outside the scanned tree",
+                    path.display(),
+                    line_no + 1
+                );
             }
+            let src = std::fs::read_to_string(path).expect("unreadable source");
+            strays.extend(handrolled_seals_in(
+                &path.display().to_string(),
+                &src,
+                &allowed,
+            ));
         }
         assert!(
             strays.is_empty(),
@@ -417,6 +557,22 @@ mod tests {
     /// through `derive_facing` left the entire suite green, because today both
     /// modules are `pub(crate)` and the difference is invisible. Invisible now,
     /// load-bearing at M2 — which is exactly when nobody will be looking.
+    ///
+    /// **Deliberately single-file, unlike the other two guards.** `derive_facing`
+    /// is one module declared here, and another file cannot add to its body, so
+    /// widening the scan would not raise the detection power — `docs/rules/test.md`
+    /// §9 rule 7 is about enumerating a set of files, and this check's subject is
+    /// one module's contents.
+    ///
+    /// **That is only true of the file scope. The name list below is hardcoded,
+    /// and that is a live hole — #65.** Moving an existing structural seal into
+    /// `derive_facing` fails here; *adding* a new one does not, and M2 is exactly
+    /// when `SealedEndpoint` / `SealedField` / `SealedCondition` arrive in this
+    /// module. A `pub use super::private::*;` also passes. Both measured. The fix
+    /// is to derive the list from `declared_seals()` minus an explicit allowlist,
+    /// the way `seals_should_only_be_declared_through_the_macro` now derives its
+    /// own — tracked separately because the defect is *what is named*, not *where
+    /// it lives*.
     #[test]
     fn structural_seals_should_not_be_reachable_through_the_derive_facing_module() {
         let src = include_str!("sealed.rs");
@@ -450,5 +606,99 @@ mod tests {
             derive_facing.contains("SealedIncludes"),
             "`SealedIncludes` should be the derive-facing seal"
         );
+    }
+
+    // ----------------------------------------------------------------- the
+    // guards' own tests. Scans run over the real tree can only show that today's
+    // tree is clean — they cannot show the scan would notice if it were not.
+    // Both directions are pinned against fixed input.
+    //
+    // The predicate is name-based, so a fixture is just a source line plus the
+    // allow-list it is judged against. No `concat!` tricks are needed: an array
+    // element trims to a leading `"`, which never matches `pub trait`. (An
+    // earlier version used `concat!` and justified it with a hazard that was
+    // measured not to exist for this fixture shape.)
+
+    fn allow(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn a_trait_that_is_neither_sealed_nor_reexported_should_be_reported() {
+        let src = ["pub trait MySeal {}"].join("\n");
+        let found = handrolled_seals_in("src/domain.rs", &src, &allow(&["Includes"]));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].starts_with("src/domain.rs:1:"), "{found:?}");
+    }
+
+    #[test]
+    fn file_scope_should_not_be_a_free_pass() {
+        // The predicate this replaced treated file scope as safe. Every module in
+        // this crate is private (`lib.rs`: `mod domain; mod sealed; mod
+        // typelevel;`), so file scope is *inside* a non-`pub` module and a trait
+        // there is a usable seal — measured downstream, six ways.
+        let src = ["pub trait E1Seal {}", "impl<T> E1Seal for T {}"].join("\n");
+        assert_eq!(
+            handrolled_seals_in("src/typelevel.rs", &src, &allow(&["ConsList"])).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_reexported_trait_should_not_be_reported() {
+        // The six real sealed traits are public because `lib.rs` re-exports them,
+        // which is the property that matters — not where they are declared.
+        let src = [
+            "pub trait ConsList: private::SealedConsList {}",
+            "pub trait Has<T, Idx>: private::SealedHas<T, Idx> {}",
+            "pub trait Includes<D>: derive_facing::SealedIncludes<D> {}",
+        ]
+        .join("\n");
+        assert!(
+            handrolled_seals_in(
+                "src/typelevel.rs",
+                &src,
+                &allow(&["ConsList", "Has", "Includes"])
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_seal_declared_through_the_macro_should_not_be_reported() {
+        let src = ["pub trait SealedConsList {}"].join("\n");
+        assert!(handrolled_seals_in("src/sealed.rs", &src, &allow(&["SealedConsList"])).is_empty());
+    }
+
+    #[test]
+    fn the_seal_macro_template_should_not_be_reported() {
+        // `$name` is not an identifier, so `declared_pub_trait` returns None.
+        let src = ["        pub trait $name $(<$($param),+>)? {}"].join("\n");
+        assert!(handrolled_seals_in("src/sealed.rs", &src, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_trailing_dollar_name_comment_should_not_disable_the_check() {
+        // The previous version skipped any line *containing* `$name`, so this
+        // seven-character comment turned the guard off entirely (measured).
+        let src = ["pub trait Forgeable {} // $name"].join("\n");
+        assert_eq!(handrolled_seals_in("src/domain.rs", &src, &[]).len(), 1);
+    }
+
+    #[test]
+    fn reexported_names_should_include_every_pub_use_target() {
+        let names = reexported_names();
+        for expected in ["Includes", "ConsList", "Has", "Append", "Lookup", "Index"] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "`{expected}` is re-exported by lib.rs but not derived: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn seal_names_should_be_found_in_any_file() {
+        let src = ["seal! {", "    /// Doc.", "    SealedElsewhere", "}"].join("\n");
+        assert_eq!(seal_names_in(&src), vec!["SealedElsewhere".to_string()]);
     }
 }
