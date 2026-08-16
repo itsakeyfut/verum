@@ -433,9 +433,15 @@ attribute to be preserved ([`diagnostics.md`](./diagnostics.md)).
 - ~~Interoperating domain opacity with sqlx's `query_as!` / `FromRow`~~ —
   **verified (T-M1-01 / #13).** The interoperation holds; the trust-boundary claim
   does not. [`persistence.md`](./persistence.md) §Verdict
-- Combining `Ctx<'req, E>` with RPITIT and async closures — **measured**
-  (T-M1-02 / #14, `spikes/ctx-lifetime-rpitit/`). Folding the verdict into the
-  specs is waiting on #38
+- ~~Combining `Ctx<'req, E>` with RPITIT and async closures~~ — **settled
+  (T-M1-02 / #14, 21 probes, compile-verified)**. RPITIT `Handler` holds, the
+  future loads on a multi-thread hyper server, `tokio::spawn` is rejected
+  (`E0521`), and `when`'s elided `AsyncFnOnce` compiles and runs. Two things the
+  design did not intend: the elision is load-bearing
+  ([`conditional-effects.md`](./conditional-effects.md) §The elision is
+  load-bearing), and ledger path 8 is closed by the higher-ranked `Ctx` rather than
+  by the remedy three documents recorded — while a *named* `'req` leaks and
+  nothing stops it (RK-017: `+ Send` is not a containment bound)
 - The ergonomics of the projection type
 - Whether this extends beyond Rust (Go / TypeScript)
 

@@ -268,6 +268,67 @@ let elevated = ctx.when::<C, _>(.., async |ctx, ..| Ok(ctx)).await?;
 //                                                   ^^^^^^^ type error
 ```
 
+### The elision is load-bearing — do not write it out
+
+`Ctx<'_, ..>`, `&mut E::Domain` and `&E::Request` above elide **three
+independent** higher-ranked lifetimes. Binding them together — the obvious way to
+"make the signature explicit" — stops compiling inside a `+ Send` handler future.
+Measured in #14 against the realistic pattern (`user` read after the scope):
+
+```text
+AsyncFnOnce(Ctx<'_,E>, &mut D, &R)                    the spec, elided   compiles
+for<'a,'b,'c> AsyncFnOnce(Ctx<'a,E>, &'b mut D, &'c R)                   compiles
+for<'a,'b>    AsyncFnOnce(Ctx<'a,E>, &'b mut D, &'b R)                   rejected
+for<'a>       AsyncFnOnce(Ctx<'a,E>, &'a mut D, &'a R)                   rejected
+```
+
+`error: implementation of AsyncFnOnce is not general enough`. The last row is
+D1b, and it is the form an implementer reaches for first. **The first version of
+the #14 spike measured exactly that row, believed it was measuring the specified
+signature, and reported that `when` does not work.**
+
+### What actually closes the scope — and what does not
+
+The bullet above says the return type is what stops `Ok(ctx)`. For the signature
+as written that is true but **redundant**; for a signature an implementer might
+write instead it is **false**. Measured:
+
+| Form | Result |
+|---|---|
+| `Result<()>`, higher-ranked `Ctx` (D3) | `E0308` — the return type rejects it |
+| free return type, higher-ranked `Ctx` (D4) | rejected anyway — the higher-ranked `Ctx` rejects it |
+| `Result<()>`, **named** `'req`, leaking (D5c) | **compiles — the scope leaks** |
+
+**The specified signature is closed by the higher-ranked `Ctx`**, which D4
+isolates: strip the return type constraint and it is still rejected. The return
+type is real but not the mechanism.
+
+**A named `'req` is closed by nothing.** D5c type-checks, and it is reachable
+from an ordinary handler — measured in review by two independent agents and
+reproduced by a third: it compiles, runs against a real multi-thread hyper
+server, and mutates the store through a `Ctx` that outlived its `when` scope.
+
+> ### ⚠️ `+ Send` is not a containment bound
+>
+> An earlier version of this section said `+ Send` on the handler's future was
+> what closed the path. **That is withdrawn.** `Handler::handle` is
+> `fn .. -> impl Future + Send`, not `async fn`, so the bound constrains only what
+> the *returned future* holds across awaits. A handler body is synchronous, already
+> holds `Ctx<'req, Self>` with `'req` named, and can drive the leaking future to
+> completion before it ever builds the future it returns. `.await` is the only
+> thing that propagates the obligation.
+>
+> `+ Send` *is* the discriminator for the awaited form — D5a/D5b/D5d fail under it
+> and pass without it, measured both directions. That is a fact about HRTB
+> inference, not a containment guarantee, and the two must not be conflated again.
+
+**The remedy is a constraint on the signature.** `when` must be generated with the
+elided (higher-ranked) form, never with a named `'req`. `when` is macro-generated,
+so this belongs at **defence layer 1** — the macro emits the signature and can
+refuse to emit the broken one ([`diagnostics.md`](./diagnostics.md)). Nothing
+enforces it today; the ledger entry is
+[`unverified-boundaries.md`](./unverified-boundaries.md) path 8.
+
 ---
 
 ## What is guaranteed
@@ -276,7 +337,7 @@ let elevated = ctx.when::<C, _>(.., async |ctx, ..| Ok(ctx)).await?;
 |---|---|
 | A conditional mutation / emit / call does not fire outside the scope | The outer `ctx` does not hold the capability → type error |
 | An undeclared conditional effect cannot fire | It is not in `Conditional` → `Lookup` fails |
-| The elevated context cannot be carried out of the scope | The closure's return type is fixed to `Result<()>` |
+| The elevated context cannot be carried out of the scope | **Only for the signature as written**, where the higher-ranked `Ctx` rejects it (the return type does too, redundantly). A named `'req` leaks and nothing stops it — see §What actually closes the scope |
 | The correspondence between condition and effect is visible in the code | It is visualised as a block structure |
 
 ---

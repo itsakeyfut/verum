@@ -1,0 +1,46 @@
+[package]
+name = "app"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fw.workspace = true
+tokio.workspace = true
+hyper.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+
+# One feature per probe that is expected **not** to compile, all off by default,
+# so the default build is the design as the specs describe it and each rejection
+# is named in run.sh's output.
+#
+# Probes expected to *pass* carry no feature and are always compiled — including
+# the ones that demonstrate a defect (D5, E1). A defect that only exists behind a
+# flag is easy to read as hypothetical; these are in the baseline.
+[features]
+a0-forge-ctx = []
+a3-non-send-body = []
+b2a-erased-sized = []
+b2b-erased-self-param = []
+b4a-borrow-from-self = []
+c1-spawn-ctx = []
+c3-static-channel = []
+d1-bound-lifetimes = []
+d5a-when-named-call = []
+d5b-when-named-leak = []
+d5c-when-named-leak-nosend = []
+d5d-nosend-leak-from-handler = []
+d1e-when-unboxed-fut = []
+d2-when-capture = []
+d3-when-leak-fixed-return = []
+d4-when-leak-unconstrained = []
+e2-repo-lifetime-attack = []
+e4-repo-phantom-attack = []
+# Forwards to `fw`, because the signature under test cannot be implemented
+# outside the framework — `Ctx::new` is `pub(crate)`, which is probe A0.
+f1-spec-spawn = ["fw/f1-spec-spawn"]

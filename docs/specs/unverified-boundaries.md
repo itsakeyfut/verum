@@ -135,10 +135,10 @@ alternative pushes people onto unchecked routes).
 
 | # | Route | Response | State |
 |---|---|---|---|
-| 6 | Carrying `Ctx` out with `tokio::spawn` | `Ctx<'req, E>` (not `'static`; `Send` preserved) | **Closed in the First PoC** |
-| 7 | Handing it to a `static Sender<Ctx<E>>` | Same | **Closed in the First PoC** |
-| 8 | Leaking out of a `when` scope with `Ok(ctx)` | The closure's return type is fixed to `Result<()>` | **Closed in the First PoC** |
-| 9 | `Ctx::for_test()` as a god-mode constructor | Require a sealed `Runtime` token; testing goes through an API with a fixed endpoint type | **Closed in the First PoC** |
+| 6 | Carrying `Ctx` out with `tokio::spawn` | `Ctx<'req, E>` (not `'static`; `Send` preserved). ⚠️ The promised alternative `ctx.spawn::<Job>` **does not compile** (F1) | **Closed in the First PoC** — measured, T-M1-02 probe C1 (`E0521`) |
+| 7 | Handing it to a `static Sender<Ctx<E>>` | Same, and the same missing alternative | **Closed in the First PoC** — measured, probe C3 (`E0521`) |
+| 8 | Leaking out of a `when` scope with `Ok(ctx)` | **Not the return type** — the higher-ranked `Ctx` closes the specified signature; see below | **Closed for the specified signature. ⚠️ OPEN for a named `'req`** — reachable from an ordinary handler today (measured) |
+| 9 | `Ctx::for_test()` as a god-mode constructor | Require a sealed `Runtime` token; testing goes through an API with a fixed endpoint type | **Closed in the First PoC** — partially measured (below) |
 | 10 | A `PgPool` on the endpoint struct | `#[endpoint]` rejects anything but a unit struct | **Closed in the First PoC** |
 | 11 | Passing a `dyn Repository` to a service (the type parameters vanish) | Do not expose `dyn Repository`; parameterise the service by capabilities too | **Closed in the First PoC** |
 | 12 | A hand-written `impl Endpoint` declaring arbitrary capabilities | Seal `Endpoint` | **Closed in the First PoC** |
@@ -264,6 +264,67 @@ alternative pushes people onto unchecked routes).
 > E0277 and a declared one compiles. Detail in
 > [`../rules/api-surface.md`](../rules/api-surface.md) §2, "a seal must carry the
 > target trait's type arguments".
+
+#### path 8 — the recorded remedy is not the mechanism, and a named `'req` is open (compile-verified)
+
+**Four** documents recorded the remedy as "the closure's return type is fixed to
+`Result<()>`" — `conditional-effects.md`, `capability-system.md`,
+`handler-rules.md`, and this row itself. T-M1-02 measured it:
+
+| Probe | Return type | `Ctx` lifetime | Result |
+|---|---|---|---|
+| D3 | `Result<()>` | higher-ranked | `E0308` |
+| D4 | free | higher-ranked | rejected anyway |
+| D5a | `Result<()>` | **named** — no leak attempted | `not general enough` under `+ Send` |
+| D5c | `Result<()>` | **named** — leaking | **compiles** |
+
+**What closes the specified signature is the higher-ranked `Ctx`.** D3 and D4
+each reject `Ok(ctx)` on their own, so the return type is redundant — real, but
+not the mechanism.
+
+**Nothing closes a named `'req`.** D5c is that form and it type-checks, and it is
+**reachable from an ordinary handler today**: `Handler::handle` is
+`fn .. -> impl Future + Send`, not `async fn`, so the bound constrains only what
+the *returned future* holds across awaits. A handler body is synchronous and
+already holds `Ctx<'req, Self>` with `'req` named; it can drive the leaking
+future to completion before it ever constructs the future it returns.
+
+Measured in Tier-2 review by two independent agents and reproduced by a third:
+compiles, runs against the real multi-thread hyper server, and **mutates the
+store through a `Ctx` that outlived its `when` scope** — safe Rust, no added
+dependency, no god-mode constructor, no relaxed `Send`.
+
+> **`+ Send` is not a containment bound.** An earlier version of this entry said
+> it was what closed this path. That was wrong and is withdrawn. `+ Send`
+> constrains values held across awaits; `.await` is the only thing that propagates
+> the obligation, and a synchronous body can construct and consume anything on
+> either side of one. Recorded as RK-017 so it is not re-derived.
+
+**The remedy is a constraint on the signature, not a bound.** `when` must be
+generated with the elided (higher-ranked) form and never with a named `'req`.
+Because `when` is macro-generated, that is enforceable at **defence layer 1**
+([`diagnostics.md`](./diagnostics.md)) — the macro emits the signature, so the
+macro can refuse to emit the broken one. Nothing enforces it today.
+
+Two consequences the taxonomy does not express:
+
+* **The status word is wrong for the named variant.** The row says
+  "Closed in the First PoC"; that is true of the specified signature and false of
+  the variant an implementer reaches for. **#44 owns the status taxonomy** and this
+  entry supplies only the measurement.
+* **#44 was right without qualification.** It recorded this path as leaking,
+  "compiled and run". An earlier version of this entry reconciled that away as
+  "#44 measured the construction, the spike measured reachability". The leak is
+  reachable; there was nothing to reconcile.
+
+#### path 9 — A0 measures less than the status claims
+
+A0 confirms `app` cannot *construct* a `Ctx` (`Ctx::new` is `pub(crate)`;
+`E0624`). It does **not** confirm the path is closed: in the spike
+`ErasedHandler::call` is a public trait method, so a `Runtime` can be `Box::leak`ed
+and a handler driven with `'req = 'static` — no `Ctx` construction required. The
+sealed-token design is [ADR-0006](../adr/0006-runtime-sealed-token.md), still
+`proposed`, and visibility alone was measured to leak.
 
 ### Cause 3: effects that happen outside the contract
 

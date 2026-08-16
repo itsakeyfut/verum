@@ -749,6 +749,14 @@ pub struct Ctx<'req, E> { /* ... */ }   // not 'static; Send is kept
 declared. **Block a path and provide a checked alternative in the same change**
 ([`../specs/unverified-boundaries.md`](../specs/unverified-boundaries.md)).
 
+> **⚠️ That alternative does not compile as specified** (#14, probe F1: `E0521` —
+> the same error as the `tokio::spawn` it replaces). A child context that borrows
+> the parent cannot be written. An owned `JobCtx<Job>` does compile (F2) but is
+> `'static`, so it can be spawned onward without bound (F3) — reintroducing what
+> `'req` exists to prevent. **The rule above is currently unsatisfied for this
+> route**; #40 decides, and cannot be decided independently of #39. Detail in
+> [`../specs/capability-system.md`](../specs/capability-system.md).
+
 ---
 
 ## 6. Escape hatches are recorded with a proof token

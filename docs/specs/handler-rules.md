@@ -163,6 +163,14 @@ where
   (`lifetime may not live long enough`)
 - **Rust 2024 edition async closures (`AsyncFnOnce`, 1.85+) are required**
 
+> **The elision is load-bearing.** `Ctx<'_, ..>`, `&mut Domain` and `&Req` elide
+> **three independent** higher-ranked lifetimes. Writing them out as one
+> `for<'a>` — the obvious way to make the signature explicit — stops compiling
+> inside a `+ Send` handler future (`implementation of AsyncFnOnce is not general
+> enough`). Measured as #14's D1b, with the full table in
+> [`conditional-effects.md`](./conditional-effects.md) §The elision is
+> load-bearing.
+
 ### The return type is fixed to `Result<()>`
 
 Otherwise the elevated context can be carried out of the scope.
@@ -171,6 +179,14 @@ Otherwise the elevated context can be carried out of the scope.
 let elevated = ctx.when::<C, _>(.., async |ctx, ..| Ok(ctx)).await?;
 //                                                   ^^^^^^^ type error
 ```
+
+> For the signature as written this holds, but it is **not what does the work**:
+> the higher-ranked `Ctx` rejects `Ok(ctx)` on its own. With a *named* `'req` the
+> return type stops nothing, and **nothing else does** — the leak compiles and is
+> reachable from an ordinary handler (measured, #14 D5c). `when` must therefore be
+> generated with the elided form. See
+> [`conditional-effects.md`](./conditional-effects.md) §What actually closes the
+> scope.
 
 ### What is not guaranteed
 
