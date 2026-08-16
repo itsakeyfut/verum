@@ -289,10 +289,12 @@ the *returned future* holds across awaits. A handler body is synchronous and
 already holds `Ctx<'req, Self>` with `'req` named; it can drive the leaking
 future to completion before it ever constructs the future it returns.
 
-Measured in Tier-2 review by two independent agents and reproduced by a third:
-compiles, runs against the real multi-thread hyper server, and **mutates the
-store through a `Ctx` that outlived its `when` scope** — safe Rust, no added
-dependency, no god-mode constructor, no relaxed `Send`.
+**Probe D5e** (`spikes/ctx-lifetime-rpitit/`, `bash run.sh`): compiles, runs
+against the real multi-thread hyper server, and **mutates the store through a
+`Ctx` that outlived its `when` scope** — safe Rust, no added dependency, no
+god-mode constructor, no relaxed `Send`. Found in Tier-2 review by two
+independent agents; made a standing probe in #48, so it re-runs rather than
+resting on a review that has ended.
 
 > **`+ Send` is not a containment bound.** An earlier version of this entry said
 > it was what closed this path. That was wrong and is withdrawn. `+ Send`

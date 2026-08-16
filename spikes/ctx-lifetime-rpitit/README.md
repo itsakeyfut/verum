@@ -5,7 +5,7 @@ hyper-util 0.1.20, http-body-util 0.1.5. 30 packages resolved, 28 of them
 dependencies, 21 not already in the root graph.
 
 ```bash
-bash run.sh          # 21 rows, each with its expected outcome and error text
+bash run.sh          # 22 rows, each with its expected outcome and error text
 ```
 
 > ### The gate this spike set for itself is satisfied
@@ -86,6 +86,8 @@ in `run.sh`.
 | # | Probe | Expected |
 |---|---|---|
 | D1 | the spec's signature, **elided as written**, inside a `+ Send` future | pass — baseline + runtime |
+| D1r2 | row 2 — the elision as three separate binders | pass — baseline |
+| D1b-nosend | D1b's control (`d1b_nosend`): the collapsed form with `+ Send` removed | pass — baseline |
 | **D1b** | the same elision **written out as one `for<'a>`** | fail `not general enough` |
 | D1d | `FnOnce(..) -> Pin<Box<dyn Future + Send + 'a>>` | pass — baseline + runtime |
 | **D1e** | `FnOnce(..) -> Fut`, unboxed | fail `lifetime may not live long enough` |
@@ -96,6 +98,8 @@ in `run.sh`.
 | **D5b** | the same, now leaking the `Ctx` to an outer `Option` | fail `not general enough` |
 | D5c | the same leaking body with `+ Send` dropped and nothing else | **pass** — the construction is real |
 | **D5d** | D5c **awaited** from a `+ Send` position | fail `not general enough` |
+| **D5e** | **the leak driven from a handler's synchronous body** | **pass, and asserted at run time** — `+ Send` does not contain it |
+| **D1r3** | row 3 of the four-form table — two of three lifetimes shared | fail `not general enough` |
 
 ### #39 / #40 — measured, not decided
 
@@ -131,9 +135,9 @@ Measured against the realistic pattern (`user` read after the scope, inside
 
 | Form | Result |
 |---|---|
-| `AsyncFnOnce(Ctx<'_,E>, &mut D, &R)` — **the spec, elided** | compiles |
-| `for<'a,'b,'c> AsyncFnOnce(Ctx<'a,E>, &'b mut D, &'c R)` | compiles |
-| `for<'a,'b> AsyncFnOnce(Ctx<'a,E>, &'b mut D, &'b R)` | rejected |
+| `AsyncFnOnce(Ctx<'_,E>, &mut D, &R)` — **the spec, elided** | compiles — D1 |
+| `for<'a,'b,'c> AsyncFnOnce(Ctx<'a,E>, &'b mut D, &'c R)` | compiles — D1r2 |
+| `for<'a,'b> AsyncFnOnce(Ctx<'a,E>, &'b mut D, &'b R)` | rejected — **D1r3** |
 | `for<'a> AsyncFnOnce(Ctx<'a,E>, &'a mut D, &'a R)` | rejected — **D1b** |
 
 The last row is the footgun and is the only new thing here: an implementer
@@ -343,21 +347,72 @@ by reading:
 | swap A3's `Rc` for an `Arc` | A3 `fail → pass` |
 | gut `d1_when_lends`'s body | B5+ `pass → fail` |
 | gut `e1_handle_escapes`'s body | B5+ `pass → fail` |
-| delete one runtime test | B5+ count assertion (`7 passed`) |
-| **delete one `probe` line from `run.sh`** | `FATAL: 20 rows ran, expected 21` |
-| a feature-name typo in `#[cfg(..)]` | `unexpected_cfgs = "deny"`, all three compilation units |
+| delete one runtime test | B5+ count assertion (`8 passed`) |
+| **delete one `probe` line from `run.sh`** | `FATAL: 21 rows ran, expected 22` |
+| a feature-name typo in `#[cfg(..)]` | baseline `FATAL`, from `unexpected_cfgs = "deny"` — set in all three compilation units |
+| **gut `d5e_syncbody_leak`'s body** (return the sentinel directly) | B5+ `pass → fail` — the response assertion still passes, the **store** assertion does not |
+| **remove `f2_owned_jobctx`'s sleep** | B5+ `pass → fail` — f2's pre-sleep assertion |
+| **re-point D5c's `#[cfg]` at another *declared* feature** | D5c `pass → fail`, `MISSING("Finished")` — the existence pin |
 
-The last two closed holes the first version had. Every endpoint in
+**All eleven rows were planted and observed on 2026-08-16** (#48), against the
+tree as it stands. The numbers are measured, not edited.
+
+> Four of them were re-planted while the change was written; **the other seven
+> were only measured during its code review**, after this paragraph had already
+> claimed all of them. The claim happened to be true — every row behaved as
+> written — but it was made before the evidence existed, which is the defect this
+> table exists to prevent. **A table titled "proven by planting" needs the date it
+> was planted**, or it drifts silently the next time a row is added.
+
+The last three rows are new. **Two of them closed holes that a review found and a
+first attempt did not fix**: gutting `d5e`'s body is invisible to the type level
+(§9-13's recorded limit), so the runtime assertion has to watch the *store*
+rather than the response; and the D5c `#[cfg]` hole survived a Cargo
+feature-dependency restructure — measured — and needed an existence pin
+(`const _: () = { let _ = f::<T>; };`) gated on the same feature.
+
+The `probe`-line and `unexpected_cfgs` rows closed holes the first version had. Every endpoint in
 `tests/live.rs` **delegates to the function in `app`'s lib** rather than
 reimplementing it — without that, eleven pass-probe bodies could be emptied at
 once and the suite still reported green (measured).
+
+### Rule 14 — every rejection has a standing control
+
+`docs/rules/test.md` §9-14: a rejection probe must also be checked by removing
+the cause it names. The pairs, all standing rows or baseline entries:
+
+```text
+C1 → C2        C3 → C2        B2a/B2b → B2c      B4a → B4b
+D1b → D1b-nosend              D1r3 → D1r2        D1e → D1d       D2 → D1
+D3 → D4        D5b → D5a      D5d → D5c          E2/E4a → E1     F1 → F2
+```
+
+`D1b → D1b-nosend` and `D1r3 → D1r2` are new in #48: five documents attributed
+D1b's rejection to `+ Send` and nothing had removed that bound to check.
+
+### The lockfile is not committed
+
+`.gitignore` excludes `spikes/**/Cargo.lock` and points here for the reason: a
+spike asks whether the design still holds *today*, so it resolves fresh rather
+than pinning. `run.sh` prints and asserts the versions it measured, which is the
+part that has to be reproducible.
 
 ### Remaining limits
 
 - **A2, C2, E4b and F3 have no runtime coverage** and are pinned only by a
   `const _: fn(..) = ..;` on their signature, or not at all. Gutting their
-  bodies is not detected. `impl Future` return types cannot be named, so the
-  type-level form is unavailable (§9-13's recorded limit).
+  bodies is not detected.
+- **`impl Future` return types cannot be named**, so the full
+  `const _: fn(A) -> B = f;` is unavailable for the `when` family. What *is*
+  available, and is used on D5c, is an existence pin —
+  `const _: () = { let _ = f::<T>; };` gated on the same feature. It catches a
+  mis-pointed `#[cfg]`; it does not catch an emptied body. `docs/rules/test.md`
+  §9-13 previously recorded the whole technique as unavailable here, and was
+  corrected in #48.
+- **D5c's body can still be emptied undetected.** D5e exercises the same shape
+  in the default build and asserts the store at run time, so the *leak* is
+  covered; D5c isolates only "the same body with `+ Send` dropped", and that
+  isolation is compile-only.
 - **`B5+` asserts a count, and a count is not an identity** (§9-2). Replacing
   one runtime test with another would pass.
 - **The mutation script is not in the repository** — the table above was
