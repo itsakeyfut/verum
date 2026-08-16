@@ -36,7 +36,7 @@ echo "$OUT"
 
 # §9-2. `checked:BAD` is the remaining work; it must not grow. Lower it as blocks
 # are fixed, and the diff records the progress.
-EXPECTED_BAD=23
+EXPECTED_BAD=15
 got_bad="$(awk '/checked:BAD/{print $2}' <<<"$OUT")"
 got_bad="${got_bad:-0}"
 if [[ "$got_bad" -gt "$EXPECTED_BAD" ]]; then

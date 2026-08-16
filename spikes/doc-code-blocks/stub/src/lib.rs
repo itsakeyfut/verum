@@ -84,64 +84,14 @@ pub struct Put;
 pub struct Patch;
 pub struct Delete_;
 
-// --- The sample domain the docs use throughout ------------------------------
-// `User` appears in 29 blocks, `Email` in 13. They are the running example, not
-// part of the framework.
-pub struct User;
-pub struct Order;
-pub struct AuditLog;
-
-pub mod user {
-    pub struct Id;
-    pub struct Name;
-    pub struct Email;
-    pub struct Status;
-    pub struct PasswordHash;
-}
-pub use user::{Email, Name, Status};
-pub struct UserId(pub u64);
-
-pub struct UpdateUser;
-pub struct GetUser;
-pub struct DeleteUser;
-pub struct UpdateUserRequest;
-pub struct UserView;
-pub struct EmailChanged;
-pub struct IsPaid;
-pub struct UserUpdated;
-pub struct Context;
-pub struct Req;
-pub struct Res;
-
-/// `docs/rules/type-level.md:331` uses `ReadOnly` as a **trait**
-/// (`trait ReadOnly: Endpoint<Mutates = (), ...>`), not a marker struct. The
-/// first version of this stub guessed struct and produced three `E0404`s that
-/// looked like documentation defects. They were stub defects.
+/// `docs/rules/type-level.md:331` uses `ReadOnly` as a **trait**, not a marker
+/// struct: `trait ReadOnly: Endpoint<Mutates = (), Creates = (), Deletes = ()>`.
+/// Framework-side, so it stays here.
 pub trait ReadOnly: Endpoint<Mutates = (), Creates = (), Deletes = ()> {}
 
-/// `docs/specs/effect-system.md:125` and `docs/specs/rust-type-model.md:98`
-/// both assert `GetUser: ReadOnly`. Making the sample endpoint satisfy it is
-/// what lets those blocks be checked rather than assumed.
-impl Endpoint for GetUser {
-    type Method = Get;
-    type Domain = (User, ());
-    type Request = Req;
-    type Response = Res;
-    type Reads = (Read<User, Email>, ());
-    type Mutates = ();
-    type Creates = ();
-    type Deletes = ();
-    const PATH: &'static str = "/users/{id}";
-}
-impl ReadOnly for GetUser {}
-
-/// `docs/specs/mutation-contract.md:170` names `Field` as a sealed trait.
-/// Declared nowhere in `docs/` as a signature — UNDECLARED, #43 finding.
-pub trait Field {
-    const NAME: &'static str;
-}
-
-/// `docs/specs/conditional-effects.md:76` uses `When<C, ..>` to carry a
-/// conditional effect set. Its parameter list is described in prose at
-/// `:107-115` and never written as a declaration — UNDECLARED, #43 finding.
-pub struct When<C, M = (), E = (), Ca = ()>(PhantomData<fn() -> (C, M, E, Ca)>);
+// The sample application types (`User`, `EmailChanged`, `UpdateUser`, …) are
+// NOT here. They belong to the *user's* crate in the real design, and putting
+// them in the framework stub made `impl Condition<..> for EmailChanged` an
+// orphan-rule violation (`E0117`) in five blocks that are perfectly legal where
+// they actually live. They are declared in `check.py`'s prelude instead, which
+// is compiled into each block's own crate — the faithful arrangement.

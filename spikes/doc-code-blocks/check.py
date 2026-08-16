@@ -22,6 +22,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from extract import blocks  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+# The sample application types are declared HERE, not in the stub, because in
+# the real design they belong to the user's crate. Declaring them locally is
+# what makes `impl Condition<..> for EmailChanged` legal — with them in the
+# stub, five blocks failed `E0117` for a reason that does not exist in reality.
 PRELUDE = """#![allow(unused, non_camel_case_types, incomplete_features, clippy::all)]
 extern crate stub;
 extern crate verum;
@@ -30,6 +34,55 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
+
+// In a module, imported by glob: a block that declares its own `User` or
+// `mod user` then *shadows* these instead of colliding with them. Measured —
+// declaring them at the top level broke two blocks that define their own.
+mod __app {
+    use super::*;
+
+pub struct User;
+pub struct Order;
+pub struct AuditLog;
+pub mod user {
+    pub struct Id;
+    pub struct Name;
+    pub struct Email;
+    pub struct Status;
+    pub struct PasswordHash;
+}
+pub use user::{Email, Name, Status};
+pub struct UserId(pub u64);
+pub struct UpdateUser;
+pub struct GetUser;
+pub struct DeleteUser;
+pub struct UpdateUserRequest;
+pub struct UserView;
+pub struct EmailChanged;
+pub struct EmailVerificationRequested;
+pub struct UserUpdated;
+pub struct IsPaid;
+pub struct Context;
+pub struct Req;
+pub struct Res;
+pub struct Undeclared;
+pub struct Declared;
+
+impl Endpoint for GetUser {
+    type Method = Get;
+    type Domain = (User, ());
+    type Request = Req;
+    type Response = Res;
+    type Reads = (Read<User, Email>, ());
+    type Mutates = ();
+    type Creates = ();
+    type Deletes = ();
+    const PATH: &'static str = "/users/{id}";
+}
+impl ReadOnly for GetUser {}
+
+}
+use __app::*;
 """
 
 

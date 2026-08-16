@@ -38,11 +38,11 @@ Tags follow rustdoc, so GitHub renders the documents unchanged:
 
 ```
 211 blocks
-  compile_fail   49    every one verified to actually fail
+  compile_fail   52    every one verified to actually fail
   ignore        114    fragment 68 / needs a macro from M2 26 / needs an absent crate 20
-  ok             25
+  ok             30
   text            4    no code at all — prose in a Rust fence
-  remaining      23    still unclassified; `run.sh` asserts this does not grow
+  remaining      15    still unclassified; `run.sh` asserts this does not grow
 ```
 
 ## What it found
@@ -62,6 +62,18 @@ Tags follow rustdoc, so GitHub renders the documents unchanged:
   the ❌ halves do fail, as claimed.
 - **4 blocks contain no code at all** — prose inside a Rust fence, which reads as
   checked and checks nothing.
+- **`Owner` is used in two documents and declared in none**
+  (`type-level.md:416`, `architecture-contract.md:51`). The associated type it
+  needs is now declared; **what it means is still undecided** and is left marked
+  as such rather than invented.
+- **Two documents describe a bypass that no longer works.** `impl Includes<Order>
+  for User {}` is introduced with "orphan rule を通り、`cargo build` は成功し" —
+  it has not compiled since `Includes` was sealed in #6. Now tagged
+  `compile_fail`, so the seal is re-verified on every run.
+- **`Handler` and `CtxUsers` were missing associated types** they name
+  (`Self::Request`, `Self::R`, `Self::M`). Fixed from the declarations the other
+  copies in `docs/` already carried — the documents settled it between
+  themselves, which is why these are corrections and not judgement calls.
 
 ## The stub cites its sources, deliberately
 
