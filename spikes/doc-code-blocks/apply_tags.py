@@ -27,6 +27,8 @@ TAG = {
     "ignore:frag": ("rust,ignore", "fragment, not a complete item"),
     "ignore:macro": ("rust,ignore", "needs a macro that arrives in M2"),
     "ignore:external": ("rust,ignore", "needs a crate or a verum-private module this harness does not carry"),
+    "ignore:internal": ("rust,ignore", "verum-internal: legal only inside the crate that owns the trait or type"),
+    "ignore:elided": ("rust,ignore", "declaration shown with its body elided"),
     "text": ("text", None),
 }
 

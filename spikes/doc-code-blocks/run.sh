@@ -34,9 +34,20 @@ echo "=== compile ==="
 OUT="$(python3 check.py --deps "$DEPS")"
 echo "$OUT"
 
+# A `compile_fail` block that starts compiling is a claim that has gone false —
+# the documentation says "this does not compile" about something that does. It
+# must be as fatal as an unmarked failure. Measured: the first version of this
+# script only checked `checked:BAD`, so replacing a forgery example with
+# `struct Trivial;` printed `compile_fail:BAD 1` and still exited 0.
+got_cf="$(awk '/compile_fail:BAD/{print $2}' <<<"$OUT")"
+if [[ -n "${got_cf:-}" && "$got_cf" -gt 0 ]]; then
+    echo "FATAL: $got_cf block(s) tagged compile_fail now compile" >&2
+    exit 1
+fi
+
 # §9-2. `checked:BAD` is the remaining work; it must not grow. Lower it as blocks
 # are fixed, and the diff records the progress.
-EXPECTED_BAD=15
+EXPECTED_BAD=0
 got_bad="$(awk '/checked:BAD/{print $2}' <<<"$OUT")"
 got_bad="${got_bad:-0}"
 if [[ "$got_bad" -gt "$EXPECTED_BAD" ]]; then

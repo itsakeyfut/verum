@@ -50,10 +50,28 @@ ABSENT = (
     # third-party crates the docs legitimately show
     "thiserror", "tokio", "sqlx", "quote", "syn", "proc_macro2", "uuid", "http",
     "tracing", "trybuild", "serde", "serde_json", "instant", "criterion",
-    "verum_macros", "axum", "hyper", "tower",
+    "verum_macros", "axum", "hyper", "tower", "insta",
     # `verum`'s own crate-private modules — unreachable from any downstream
     # crate by construction, so a block showing one can never compile here
     "private", "derive_facing", "__private",
+)
+
+# `crates/verum`'s own impls, quoted in the docs. `impl Has<H, There<I>> for
+# (X, T)` and `impl Ctx<'req, E> { .. }` are legal in the crate that owns the
+# trait or the type, and nowhere else — so compiling them as a downstream crate
+# is the wrong question, not a documentation defect.
+INTERNAL = (
+    "only traits defined in the current crate can be implemented for arbitrary types",
+    "must be used as the type parameter for some local type",
+    "cannot define inherent `impl` for a type outside of the crate",
+)
+
+# A block that shows a declaration with its body elided — `{ /* ... */ }`, `{ }`
+# — is illustrating a shape, not a compilable item. rustc then complains about
+# what the missing body would have provided.
+ELIDED = (
+    "not all trait items implemented",
+    "is never used",
 )
 
 # rustc reports these without a usable code, or with a code borrowed from a
@@ -62,6 +80,7 @@ PARSE = (
     "free function without a body", "non-item in item list", "expected item, found",
     "associated function in `impl` without body", "unexpected end of macro invocation",
     "expected one of", "unexpected token", "unknown start of token",
+    "expected identifier, found",
     "missing `fn` or `struct`", "expected expression",
 )
 
@@ -90,6 +109,29 @@ def compile_block(body: str, deps: pathlib.Path, tmp: pathlib.Path, n: int) -> d
     }
 
 
+def _both_halves_have_code(body: str) -> bool:
+    """True when a ✅/❌ block has code on both sides.
+
+    Only then is it splittable. A block whose ❌ side is a bare annotation
+    (`// ❌ don't do this`, no code) has nothing to split off, so it goes through
+    normal classification rather than sitting in REVIEW forever.
+    """
+    marked, cur, label = [], [], None
+    for line in body.split("\n"):
+        if "✅" in line or "❌" in line:
+            if cur and label:
+                marked.append((label, cur))
+            label = "ok" if "✅" in line else "bad"
+            cur = [line]
+        else:
+            cur.append(line)
+    if cur and label:
+        marked.append((label, cur))
+    sides = {lab for lab, lines in marked
+             if any(l.strip() and not l.strip().startswith("//") for l in lines)}
+    return len(sides) == 2
+
+
 def classify(b: dict, res: dict) -> str:
     body = b["body"]
 
@@ -109,11 +151,18 @@ def classify(b: dict, res: dict) -> str:
     # asserts the ✅ half fails. Split it or make it prose — either way a person
     # decides. (Measured: three such blocks were mis-tagged on the first sweep,
     # including the `Handler` declaration in `docs/rules/rust.md`.)
-    if "✅" in body and "❌" in body:
+    if "✅" in body and "❌" in body and _both_halves_have_code(body):
         return "REVIEW:mixed"
 
     if any(t in body for t in NEGATIVE):
-        return "compile_fail" if res["fails"] else "REVIEW:negative-but-compiles"
+        if res["fails"]:
+            return "compile_fail"
+        # It compiles. If the ❌ side carries no code, the marker is an
+        # annotation about an alternative, not a claim that this block fails —
+        # `docs/rules/perf.md:41` and `docs/rules/rust.md:76` are both that shape.
+        if "❌" in body and not _both_halves_have_code(body):
+            return "ok"
+        return "REVIEW:negative-but-compiles"
 
     if not ITEM.match(body.lstrip("\n")):
         return "ignore:frag"
@@ -122,8 +171,13 @@ def classify(b: dict, res: dict) -> str:
         return "ok"
 
     msgs = res["messages"]
-    if any(t in m for m in msgs for t in PARSE):
+    if any(t in m for m in msgs for t in PARSE) or "(...)" in body or "(..)" in body:
         return "ignore:frag"
+    if any(t in m for m in msgs for t in INTERNAL):
+        return "ignore:internal"
+    if any(t in m for m in msgs for t in ELIDED) and ("/* ... */" in body or "{ }" in body
+                                                     or "{}" in body or "…" in body):
+        return "ignore:elided"
     if any(f"`{name}`" in m for m in msgs for name in ABSENT):
         return "ignore:external"
 

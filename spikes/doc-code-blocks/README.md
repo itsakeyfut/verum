@@ -37,13 +37,22 @@ Tags follow rustdoc, so GitHub renders the documents unchanged:
 ## Current state
 
 ```
-211 blocks
-  compile_fail   52    every one verified to actually fail
-  ignore        114    fragment 68 / needs a macro from M2 26 / needs an absent crate 20
-  ok             30
-  text            4    no code at all — prose in a Rust fence
-  remaining      15    still unclassified; `run.sh` asserts this does not grow
+215 blocks
+  compile_fail   54    every one verified to actually fail, every run
+  ignore        128    fragment / needs an M2 macro / needs an absent crate /
+                       verum-internal / body elided / module without its imports
+  ok             33
+  remaining       0
 ```
+
+Both directions are guarded, and both were demonstrated by breaking them:
+
+* an untagged block that fails → `FATAL: 1 unmarked blocks fail, expected at most 0`
+* a `compile_fail` block that starts compiling → `FATAL: 1 block(s) tagged compile_fail now compile`
+
+The second guard did not exist until it was tested for. `run.sh` checked only the
+first, so replacing a forgery example with `struct Trivial;` printed
+`compile_fail:BAD 1` and still exited 0.
 
 ## What it found
 
@@ -91,7 +100,7 @@ higher-ranked lifetimes into one. A stub written from memory would bake the same
 class of error into every block it checks. When a block fails against this stub,
 the fix is either the block or the spec — never a quiet adjustment here.
 
-## The harness was wrong five times
+## The harness was wrong six times
 
 Each was found by suspecting the harness rather than the documents
 (`docs/rules/test.md` §9-6):
@@ -103,6 +112,7 @@ Each was found by suspecting the harness rather than the documents
 | the ❌ heuristic read three lines of prose above the fence | all seven hits it produced were false positives |
 | mixed ✅/❌ blocks were collapsed to `compile_fail` | adding the mixed check moved 25 blocks |
 | fence length was not matched, so a ```` ```text ```` block *showing* fence syntax had its contents read as fences | `docs/adr/0003` — the document describing this harness — reported a `compile_fail` block that compiles |
+| the exit status ignored `compile_fail:BAD` entirely | a `compile_fail` block replaced with `struct Trivial;` printed the failure and exited 0 |
 
 The first is `docs/rules/test.md` §9-4 exactly — the rule this repository wrote
 after the same class opened ten times.

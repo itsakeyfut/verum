@@ -89,6 +89,38 @@ pub struct Delete_;
 /// Framework-side, so it stays here.
 pub trait ReadOnly: Endpoint<Mutates = (), Creates = (), Deletes = ()> {}
 
+/// `docs/specs/mutation-contract.md:173` implements it as `Field<User> for Name`
+/// with `const NAME` and `type Ty`. A declaration appears nowhere in `docs/` —
+/// UNDECLARED, a #43 finding. The shape here is read off the usage.
+pub trait Field<D> {
+    const NAME: &'static str;
+    type Ty;
+}
+
+/// `docs/specs/conditional-effects.md:76` writes
+/// `When<EmailChanged, CondMutates, CondEmits, CondCalls>`. Its parameter list
+/// is described in prose at `:107-115` and never written as a declaration —
+/// UNDECLARED, a #43 finding.
+pub struct When<C, M = (), E = (), Ca = ()>(PhantomData<fn() -> (C, M, E, Ca)>);
+
+/// `docs/rules/rust.md:112` uses `Method` as a field type on `RouteKey`, and
+/// `docs/specs/rust-type-model.md:49` lists the HTTP method markers. Which of
+/// the two `Method` means is not stated; a marker enum stands in.
+pub enum Method {
+    Get,
+    Head,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+/// Placeholders the forgery examples use as stand-in local types
+/// (`docs/rules/api-surface.md:356`). Their names carry no meaning beyond
+/// "some type the downstream crate owns".
+pub struct X;
+pub struct ForgedScope;
+
 // The sample application types (`User`, `EmailChanged`, `UpdateUser`, …) are
 // NOT here. They belong to the *user's* crate in the real design, and putting
 // them in the framework stub made `impl Condition<..> for EmailChanged` an

@@ -67,6 +67,8 @@ pub struct Req;
 pub struct Res;
 pub struct Undeclared;
 pub struct Declared;
+pub struct EmailService;
+pub type __VerumUpdateUserMutates = (Mutate<User, Email>, ());
 
 impl Endpoint for GetUser {
     type Method = Get;
