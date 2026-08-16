@@ -74,7 +74,8 @@ per that rule.
 
 **Nothing enforces this today.**
 
-* Ledger path 14 is marked *First PoCで塞ぐ* with the note `Field` 未実装 — the
+* Ledger path 14 is marked *Closed in the First PoC* with the note "`Field`
+  unimplemented" — the
   remedy is "seal it", and there is nothing to seal.
 * `crates/verum/src/sealed.rs`'s parity guard scans declared seals. `Field` is not
   among them, so the guard is silent about it rather than failing — the same

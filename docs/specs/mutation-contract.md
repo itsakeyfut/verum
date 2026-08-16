@@ -1,14 +1,18 @@
-# Mutation Contract
+# Mutation contract
 
-Field-levelの可変性を型で表現する。本プロジェクトで特に重要なテーマ。
+Expressing field-level mutability in types. A particularly important theme for
+this project.
 
-関連: [`read-contract.md`](./read-contract.md) / [`capability-system.md`](./capability-system.md) / [`handler-rules.md`](./handler-rules.md) / [`unverified-boundaries.md`](./unverified-boundaries.md)
+Related: [`read-contract.md`](./read-contract.md),
+[`capability-system.md`](./capability-system.md),
+[`handler-rules.md`](./handler-rules.md),
+[`unverified-boundaries.md`](./unverified-boundaries.md).
 
 ---
 
-## 例: User Update
+## Example: updating a user
 
-対象のDomain Model:
+The domain model in question:
 
 ```text
 User
@@ -21,7 +25,7 @@ User
 └── created_at
 ```
 
-Contract宣言:
+The contract declaration:
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[endpoint(PUT "/users/{id}")]
@@ -38,41 +42,43 @@ pub struct UpdateUser;
 
 ---
 
-## Goal
+## The goal
 
-AIがEndpoint内部を読まなくても、
+Without reading the endpoint's body, an AI should be able to tell:
 
-- どのFieldが変更され得るか
-- どのFieldは絶対に変更されないか
-- どの条件で変更されるか
-- どのEventが発生するか
-
-を理解できるようにする。
+- which fields may change
+- which fields never change
+- under which conditions they change
+- which events are emitted
 
 ---
 
-## 決定: Domainは不透明型として公開する
+## Decision: a domain is exposed as an opaque type
 
-**これが最も重要な設計判断である。** Domainを通常のRust structとして公開すると、Contract全体が無効化される。
+**This is the most important design decision.** Exposing a domain as an ordinary
+Rust struct voids the whole contract.
 
 ```rust,compile_fail
-// ❌ この形では Contract が意味を持たない
+// ❌ in this shape the contract means nothing
 pub struct User { pub email: Email, pub status: UserStatus, ... }
 
-// ハンドラ側
+// in the handler
 let mut user = ctx.users().find(req.id).await?;
-user.email = req.email;              // Contract 無視。コンパイルは通る
-user.status = UserStatus::Admin;     // 宣言外 Field も自由
+user.email = req.email;              // the contract is ignored. It compiles
+user.status = UserStatus::Admin;     // an undeclared field is free too
 ```
 
-setterを呼ぶにはハンドラが `&mut User` を持つ必要があり、フィールドが `pub` なら任意の代入が合法になる。**GET Endpointでも `let mut user = ctx.users().find(id).await?` と書けるため、「GETはMutateを呼べない」という保証すら回避できる。**
+Calling a setter requires the handler to hold a `&mut User`, and if the fields
+are `pub` then arbitrary assignment is legal. **A GET handler can write
+`let mut user = ctx.users().find(id).await?` too, so even the guarantee "a GET
+cannot call a mutation" is walk-aroundable.**
 
-### 採用する形
+### The shape adopted
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[derive(Domain)]
 pub struct User {
-    id:            UserId,      // pub を付けると derive がコンパイルエラーを出す
+    id:            UserId,      // adding pub makes the derive emit a compile error
     name:          String,
     email:         Email,
     password:      PasswordHash,
@@ -82,33 +88,36 @@ pub struct User {
 }
 ```
 
-deriveが生成するもの:
+What the derive generates:
 
 ```text
-1. Field マーカ型（ZST）           → mod user { pub struct Name; ... }
-2. Capability 要求付き getter       → read-contract.md（**それが `reads` の強制になるかは未決** — [ADR-0004](../adr/0004-reads-enforcement-level.md) / #15）
-3. pub(crate) な Repr               → 内部表現（⚠️「Repository 実装専用」にはならない — path 21）
-4. 宣言 Field のみを出す Debug       → ログへの機密漏れを防ぐ
-5. 宣言 Field のみを出す Serialize   → 同上
+1. Field marker types (ZSTs)         → mod user { pub struct Name; ... }
+2. Capability-checked getters        → read-contract.md (**whether that amounts to enforcing `reads`
+                                        is undecided** — ADR-0004 / #15)
+3. A pub(crate) Repr                 → the internal representation (⚠️ it does not end up
+                                        "for the repository implementation only" — path 21)
+4. A Debug emitting declared fields only     → prevents secrets leaking into logs
+5. A Serialize emitting declared fields only → same
 ```
 
-### `&mut User` を渡すことは安全になる
+### Passing `&mut User` becomes safe
 
-フィールドがprivateであれば、`&mut User` を保持していても直接代入はできない。
+With private fields, holding a `&mut User` does not permit direct assignment.
 
 ```rust,ignore   // fragment, not a complete item
-ctx.users().set_email(&mut user, req.email)?;   // ✅ Capability 経由
+ctx.users().set_email(&mut user, req.email)?;   // ✅ through a capability
 ```
 
 ```rust,compile_fail
 user.email = req.email;                          // ❌ private field
 ```
 
-**したがってsetterのシグネチャを変える必要はない。** ergonomicsを保ったまま直接代入経路を塞げる。
+**So the setter signatures do not have to change.** The direct-assignment route is
+closed while the ergonomics are preserved.
 
-### `pub` フィールドを拒否する理由
+### Why `pub` fields are rejected
 
-deriveが `pub` フィールドを検出したらコンパイルエラーにする。
+The derive makes a detected `pub` field a compile error.
 
 ```text
 error: Domain fields must be private
@@ -121,27 +130,31 @@ error: Domain fields must be private
    = help: if this field must be public, it does not belong in a Domain
 ```
 
-「うっかり `pub` を付ける」ことは保証を破る経路のうち**マクロが弾ける**ものなので、macro段階で弾く。
+"Adding `pub` by accident" is one of the guarantee-breaking routes that **a macro
+can reject**, so it is rejected at the macro stage.
 
-> **唯一の経路ではない**（T-M1-01 / #13 で実測）。同じマクロが生成する `Repr` が横に抜け道を開けており（台帳 path 21）、`Repr` に `Debug` / `Clone` を derive すると path 3 / 4 も復活する。この検査は必要だが十分ではない。
+> **It is not the only route** (measured in T-M1-01 / #13). The `Repr` the same
+> macro generates opens a bypass alongside it (ledger path 21), and deriving
+> `Debug` or `Clone` on `Repr` brings paths 3 and 4 back. This check is necessary
+> but not sufficient.
 
-### Repository実装との相互運用
+### Interoperating with a repository implementation
 
-sqlxの `query_as!` は `pub` フィールドを要求する。そのため `pub(crate)` な `Repr` を生成する。
+sqlx's `query_as!` requires `pub` fields, so a `pub(crate)` `Repr` is generated.
 
 ```rust,ignore   // fragment, not a complete item
-// マクロ生成（derive か属性かは未確定 — 下の注記を見ること）
+// macro-generated (derive or attribute is undecided — see the note below)
 pub(crate) struct UserRepr {
-    pub id: UserId,          // pub 必須（query_as! は呼び出し側で構造体リテラルに展開する）
+    pub id: UserId,          // pub is required (query_as! expands to a struct literal at the call site)
     pub name: String,
     pub email: Email,
-    // Debug / Clone / Serialize は derive しない（台帳 path 3 / 4 が Repr 経由で復活する）
+    // Do not derive Debug / Clone / Serialize (ledger paths 3 / 4 come back through Repr)
 }
 
-// Domain は借用可能な Repr を所有する（newtype はその一形態。強制ではない）。
-// 内側フィールドは private — pub(crate) にすると `u.0.email = v` が通り、
-// 上の不透明化が直接無効化される。
-// ⚠️ この newtype 形は derive では出せない（E0428）。下の注記を見ること。
+// The domain owns a borrowable Repr (a newtype is one way to do that, not a requirement).
+// The inner field is private — making it pub(crate) lets `u.0.email = v` compile,
+// voiding the opacity above directly.
+// ⚠️ This newtype shape cannot be emitted by a derive (E0428). See the note below.
 pub struct User(UserRepr);
 
 impl User {
@@ -150,25 +163,47 @@ impl User {
 }
 ```
 
-> **⚠️ この形は sqlx とは噛み合うが、「信頼境界 = Repository 実装」を型で表現しない**（T-M1-01 / #13 でコンパイル検証済み）。
+> **⚠️ This shape does mesh with sqlx, but it does not express "the trust boundary
+> is the repository implementation" in types** (compile-verified in T-M1-01 / #13).
 >
-> `#[derive(Domain)]` は**利用者のクレートで展開される**ため `pub(crate)` はアプリクレート全体を指す。したがって上の `from_repr` / `as_repr` は**そのクレートのあらゆるハンドラから到達可能**であり、`User::from_repr(UserRepr { email: 任意, .. })` で任意の値の Domain を組める。Repository を別クレートに置いた場合は逆に `Repr` が全く見えず（`E0603`）、設計として機能しない。
+> `#[derive(Domain)]` **expands in the user's crate**, so `pub(crate)` means the
+> whole application crate. The `from_repr` / `as_repr` above are therefore
+> **reachable from every handler in that crate**, and
+> `User::from_repr(UserRepr { email: anything, .. })` assembles a domain from
+> arbitrary values. Putting the repository in a separate crate has the opposite
+> problem: `Repr` is invisible (`E0603`) and the design does not function at all.
 >
-> つまり**フィールドを private にすること自体は機能している**が、`Repr` が横に開いた抜け道になっている。台帳の **path 21**。
+> In other words **making the fields private does work**, but `Repr` has opened a
+> bypass alongside it. Ledger **path 21**.
 >
-> **ただし private 化の保証範囲は「定義モジュールの外から」であって、型の境界ではない**（実測）。定義モジュールとその子モジュールからは `u.0.email = v` が通り、**マクロは利用者の `struct User` と同じモジュールに展開される**ので、利用者がその横に書くヘルパは緩い側に立つ。
+> **But the guarantee from privacy is "from outside the defining module", not a
+> type boundary** (measured). From the defining module and its children,
+> `u.0.email = v` compiles, and **the macro expands in the same module as the
+> user's `struct User`**, so a helper the user writes next to it stands on the
+> permissive side.
 >
-> エラーコードも形で変わる（実測）: newtype で `email()` getter がある場合 `u.email = v` は **`E0615`**、getter が無ければ `E0609`、フラットな private 名前付きフィールドを**モジュール外から**触った場合だけ `E0616`。**`E0615` / `E0609` は `#[diagnostic::…]` で文言を差し替えられない**ので、`E0616` が持つ誘導は得られない。
+> The error code varies with the shape too (measured): with a newtype and an
+> `email()` getter, `u.email = v` is **`E0615`**; without the getter it is `E0609`;
+> only a flat private named field touched **from outside the module** gives
+> `E0616`. **`E0615` and `E0609` cannot have their wording replaced with
+> `#[diagnostic::…]`**, so the guidance `E0616` carries is not available.
 >
-> 加えて、**derive は入力と同名のアイテムを追加できない**ので、上の `pub struct User(UserRepr)` は `#[derive(Domain)]` が出せる形ではない（`E0428`）。ただし `as_repr(&self) -> &Repr` という**署名自体は derive で満たせる**形が複数ある（実測）ので、「署名と derive が両立しない」わけではない。どのマクロ形にするかは**未確定**（#18）。
+> On top of that, **a derive cannot add an item with the same name as its input**,
+> so the `pub struct User(UserRepr)` above is not something `#[derive(Domain)]` can
+> emit (`E0428`). Several shapes **do satisfy the `as_repr(&self) -> &Repr`
+> signature itself** through a derive (measured), so it is not the case that the
+> signature and a derive are incompatible. Which macro shape to use is
+> **undecided** (#18).
 >
-> 判定の全文と21プローブの表は [`persistence.md`](./persistence.md) §判定 と `spikes/domain-opacity-sqlx/README.md`。
+> The full verdict and the 21-probe table are in
+> [`persistence.md`](./persistence.md) §Verdict and
+> `spikes/domain-opacity-sqlx/README.md`.
 
 ---
 
-## 型表現
+## The type representation
 
-### 1. Field マーカ型（derive生成）
+### 1. Field marker types (derive-generated)
 
 ```rust,ignore   // module shown without its imports; `Field` is in scope in the real file
 pub mod user {
@@ -183,12 +218,14 @@ pub mod user {
 }
 ```
 
-### 2. Mutationは Capability を要求する
+### 2. A mutation requires a capability
 
-Repositoryへのアクセスは拡張trait経由で提供される（inherent implはorphan ruleにより不可 — [`rust-type-model.md`](./rust-type-model.md)）。
+Repository access is provided through an extension trait (an inherent impl is
+impossible under the orphan rule —
+[`rust-type-model.md`](./rust-type-model.md)).
 
 ```rust
-// derive が Domain ごとに生成する拡張 trait
+// the extension trait the derive generates per domain
 pub trait UserRepo<M> {
     fn set_email<I>(&self, u: &mut User, v: Email) -> Result<()>
     where M: Has<Mutate<User, user::Email>, I>;
@@ -198,41 +235,53 @@ pub trait UserRepo<M> {
 }
 ```
 
-`M` は `E::Mutates`（Contractから展開されたcons list）。宣言していないFieldのsetterはwhere節が満たされないため、**呼び出しがコンパイルエラーになる**。
+`M` is `E::Mutates`, the cons list expanded from the contract. An undeclared
+field's setter has an unsatisfied where clause, so **calling it is a compile
+error.**
 
-> 注: `I` は所属判定の推論用パラメータ。`Has` の再帰implがcoherenceを満たすために必要（[`rust-type-model.md`](./rust-type-model.md)）。deriveが生成するため利用者は書かない。
+> Note: `I` is the inference parameter for the membership decision. It is required
+> for `Has`'s recursive impls to satisfy coherence
+> ([`rust-type-model.md`](./rust-type-model.md)). The derive generates it; users
+> never write it.
 
-### 3. ハンドラからの呼び出し
+### 3. Calling it from a handler
 
 ```rust,ignore   // fragment, not a complete item
 ctx.users().set_email(&mut user, req.email)?;
 ```
 
-Capabilityトークンは引数に現れない（`Ctx<'req, Self>` が保持）。判断理由は [`capability-system.md`](./capability-system.md) を参照。
+The capability token does not appear as an argument — `Ctx<'req, Self>` holds it.
+The reasoning is in [`capability-system.md`](./capability-system.md).
 
 ---
 
-## MustNotMutate は宣言不要
+## MustNotMutate needs no declaration
 
-「そのFieldのCapabilityが発行されない」ことで自然に成立する。
+It holds naturally, because no capability is issued for that field.
 
 ```rust,compile_fail
-// Contract に User::id / User::created_at がない
+// the contract has no User::id / User::created_at
 ctx.users().set_id(&mut user, other_id)?;
-//          ^^^^^^ 型エラー（E0277）: where 節が満たされない
+//          ^^^^^^ type error (E0277): the where clause is unsatisfied
 ```
 
-> **正確な表現について**: setterはDomainのFieldごとにderiveが生成するため、`set_id` というメソッド自体は**存在する**。満たされないのはwhere節であり、出るエラーはE0277（メソッド不在のE0599ではない）。
+> **On stating this accurately**: the derive generates a setter per domain field,
+> so the method `set_id` **does exist.** What is unsatisfied is the where clause,
+> and the error is E0277 (not E0599, "no such method").
 >
-> 実務上の帰結として、**rust-analyzerはGETのハンドラでも `set_email` を補完し続ける**。「そもそも呼び出せない」という体感は得られず、「呼び出すとコンパイルエラーになる」が正確な保証である。
+> In practice this means **rust-analyzer keeps completing `set_email` even in a
+> GET handler.** The feeling of "it cannot be called at all" is not available; the
+> accurate guarantee is "calling it is a compile error".
 
 ---
 
-## `forbidden` の意味論
+## The semantics of `forbidden`
 
-> Q-C実験で「`forbidden` の仕様がチートシートに未記載で、マクロが実際に何を検証するのか確証がない」と指摘された箇所。仕様として確定させる。
+> The point the Q-C experiment flagged: "`forbidden`'s specification was not in the
+> cheatsheet, and there is no confirmation of what the macro actually checks".
+> Fixed here as specification.
 
-### 定義
+### Definition
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[contract(
@@ -241,9 +290,11 @@ ctx.users().set_id(&mut user, other_id)?;
 )]
 ```
 
-**`forbidden` は宣言的な意図表明であり、型検査上は冗長である。** `mutates` に無いFieldはCapabilityが発行されないため、`forbidden` に書かなくても呼び出しはコンパイルエラーになる。
+**`forbidden` is a declarative statement of intent, and redundant as far as the
+type check goes.** A field absent from `mutates` gets no capability, so the call
+is a compile error whether or not it appears in `forbidden`.
 
-macroが検査するのは**1点だけ**。
+The macro checks **exactly one thing.**
 
 ```text
 error: `User::status` is declared both in `mutates` and `forbidden`
@@ -257,33 +308,42 @@ error: `User::status` is declared both in `mutates` and `forbidden`
    = help: remove one of them
 ```
 
-条件付きMutation（`when` 内の `mutates`）との重複も同様に弾く。
+An overlap with a conditional mutation (a `mutates` inside `when`) is rejected the
+same way.
 
-### 冗長なのに残す理由 — 実験で判明した価値
+### Why keep something redundant — the value the experiment found
 
-Q-C実験のタスクCで、被験者は「email変更時に status を Unverified に戻す」という要件に対し、**`forbidden` から `User::status` を削除してから `mutates` に追加した**。
+In task C of the Q-C experiment, faced with the requirement "reset status to
+Unverified when the email changes", the subject **removed `User::status` from
+`forbidden` and then added it to `mutates`.**
 
-この削除操作が**diffに残った**。
+That removal **stayed in the diff.**
 
-一方、生成メタデータ方式（条件2）では契約ファイルが更新されず、**同じ緩和がdiffに一切現れなかった**。
+Under the generated-metadata approach (condition 2), the contract file was not
+updated and **the same relaxation left no trace in the diff at all.**
 
-> `forbidden` は型強制の手段ではなく、**意図の記録装置**である。
+> `forbidden` is not a means of type enforcement but **a recorder of intent.**
 >
-> 「絶対に変更しない」と宣言したものを解除する操作を、明示的な削除としてdiffに残す。これがQ-C実験で確認された唯一の実質的な差別化点だった。
+> Undoing something declared as "never changed" is left in the diff as an explicit
+> deletion. That was the only substantive differentiator the Q-C experiment
+> confirmed.
 
-詳細は [`evaluation.md`](./evaluation.md) を参照。
+Detail in [`evaluation.md`](./evaluation.md).
 
-### 使いどころ
+### When to use it
 
-全Fieldについて禁止を書かせると冗長になり、書き忘れと意図の区別もつかなくなる。**原則は「宣言されたmutatesのみが可能」**とし、`forbidden` は以下の場合に限る。
+Requiring a prohibition for every field is verbose, and makes forgetting
+indistinguishable from intent. **The principle is "only what `mutates` declares is
+possible"**, and `forbidden` is limited to:
 
-- セキュリティ上「絶対に触らない」ことを記録したいField（`password_hash` 等）
-- 業務上の不変条件（`created_at`、`id`）
-- レビュー時に注意を向けたいField
+- Fields where "never touch this" is worth recording for security
+  (`password_hash` and the like)
+- Business invariants (`created_at`, `id`)
+- Fields a reviewer should be pointed at
 
-### AI Contextでの扱い
+### Treatment in the AI Context
 
-型で強制していないことを隠さない。
+That it is not type-enforced is not hidden.
 
 ```json
 "forbidden": {
@@ -293,105 +353,122 @@ Q-C実験のタスクCで、被験者は「email変更時に status を Unverifi
 }
 ```
 
-`enforcement: "intent_only"` として、`upper_bound_checked` と区別する。
+`enforcement: "intent_only"` distinguishes it from `upper_bound_checked`.
 
 ---
 
-## 条件付き Mutation
+## Conditional mutation
 
-条件下でのみ変更されるFieldは、**`when` ブロック内に宣言する**。
+A field changed only under a condition is **declared inside the `when` block.**
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[contract(
-    mutates   = [User::name],              // 無条件
+    mutates   = [User::name],              // unconditional
     when(EmailChanged) => {
-        mutates = [User::email],           // この条件下でのみ
+        mutates = [User::email],           // only under this condition
     },
 )]
 ```
 
-トップレベルと `when` 内に同じFieldを書くことは禁止（macroが弾く）。
+Writing the same field both at the top level and inside `when` is forbidden (the
+macro rejects it).
 
-実効的な変更可能Field集合は `mutates ∪ 全 when の mutates` であり、AI Contextには合算した完全形を出力する。
+The effective set of mutable fields is `mutates ∪ the mutates of every when`, and
+the AI Context emits the combined, complete form.
 
-詳細は [`conditional-effects.md`](./conditional-effects.md) を参照。
+Detail in [`conditional-effects.md`](./conditional-effects.md).
 
 ---
 
-## Field単位メソッドの強制
+## Enforcing per-field methods
 
-Repositoryは包括的な `save()` / `update()` を**提供しない**。
+A repository does **not** provide a blanket `save()` or `update()`.
 
 ```rust,compile_fail
-// ❌ 提供しない
+// ❌ not provided
 ctx.users().save(&mut user)?;
 ```
 
-理由は2つ。
+Two reasons.
 
-1. **型検査が効かなくなる** — `save` は「全Fieldを書き戻す」操作であり、どのCapabilityを要求すべきか決まらない
-2. **実装が読めなくなる** — Contractが正しくても、実装のどの行で何が変わったか分からない
+1. **Type checking stops working** — `save` writes back every field, so which
+   capability it should require is undetermined.
+2. **The implementation becomes unreadable** — even with a correct contract, which
+   line changed what is unknown.
 
-これは [`handler-rules.md`](./handler-rules.md) Rule 1 として仕様化されている。
+This is specified as [`handler-rules.md`](./handler-rules.md) Rule 1.
 
-> ただしRead側については、N+1回避（eager loading）との衝突が未解決。[`research-questions.md`](./research-questions.md) を参照。
+> The read side has an unresolved collision with N+1 avoidance (eager loading).
+> See [`research-questions.md`](./research-questions.md).
 
 ---
 
-## reads との関係
+## Relationship to `reads`
 
-`mutates` に宣言したFieldは、変更前の値を読む必要があるため**自動的に `reads` に含まれる**。
+A field declared in `mutates` needs its previous value read, so it is
+**automatically included in `reads`.**
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[contract(
     reads   = [User::id, User::status],
     mutates = [User::name, User::email],
 )]
-// 実効的な read 集合: id, status, name, email
+// effective read set: id, status, name, email
 ```
 
-詳細は [`read-contract.md`](./read-contract.md) を参照。
+Detail in [`read-contract.md`](./read-contract.md).
 
 ---
 
-## 到達範囲の限界
+## The limit of what this reaches
 
-型検査はメソッド呼び出しの可否までしか及ばない。**Repository実装内部のSQLには届かない。**
+Type checking reaches only as far as whether a method may be called. **It does not
+reach the SQL inside a repository implementation.**
 
 ```rust,compile_fail
 impl UserRepository for PgUserRepository {
     async fn set_email(&self, u: &mut User, v: Email) -> Result<()> {
         sqlx::query!("UPDATE users SET email = $1, status = 'x' WHERE id = $2", ...)
-        //                                        ^^^^^^^^^^^^ 宣言外だが検出できない
+        //                                        ^^^^^^^^^^^^ undeclared, and undetectable
     }
 }
 ```
 
-Repository実装が信頼境界になる。詳細と緩和策は [`persistence.md`](./persistence.md) を参照。
+The repository implementation is the trust boundary. Detail and mitigations in
+[`persistence.md`](./persistence.md).
 
-**Domain不透明化後も残る経路**は [`unverified-boundaries.md`](./unverified-boundaries.md) に列挙されている。特に:
+**The routes that survive domain opacity** are listed in
+[`unverified-boundaries.md`](./unverified-boundaries.md). In particular:
 
-- `*user = other_user`（`find` で2件取って全体置換）
-- 行レベル権限（`Mutate<User, Email>` は「この User」を意味しない）
-
----
-
-## 未解決の課題
-
-- **ソフトデリート** — `mutates = [User::deleted_at]` と `mutates = [User::name]` が構文上区別できない。"Semantics over Syntax" がCRUD最頻出パターンで機能しない
-- **楽観ロック** — Field単位setterでは `WHERE id=? AND version=?` のCompare-and-Swapを原子操作として表現できない
-- **Bulk operation** — 100件一括更新をField単位setterでどう書くか
-- **一覧・集計・JOIN** — `Read<Domain, Field>` が単一インスタンス前提であることの帰結
-
-[`research-questions.md`](./research-questions.md) を参照。
+- `*user = other_user` (fetch two with `find` and replace wholesale)
+- Row-level permissions (`Mutate<User, Email>` does not mean "this user")
 
 ---
 
-## 検証項目
+## Open problems
 
-- Field-level Mutationを型で表現できる
-- 宣言外のMutationがコンパイルエラーになる
-- MustNotMutateなFieldへの変更経路が存在しない
-- **Domain不透明化がsqlxと噛み合う** — ✅ **成立**（T-M1-01 / #13 で実測）。ただし「信頼境界 = Repository 実装」は不成立（台帳 path 21）
-- **`pub` フィールドをderiveが拒否できる**
-- エラーメッセージがContract宣言箇所を指す（[`diagnostics.md`](./diagnostics.md)）
+- **Soft delete** — `mutates = [User::deleted_at]` and `mutates = [User::name]`
+  are syntactically indistinguishable. "Semantics over syntax" fails on the most
+  common CRUD pattern
+- **Optimistic locking** — per-field setters cannot express
+  `WHERE id=? AND version=?` compare-and-swap as an atomic operation
+- **Bulk operations** — how a 100-row batch update is written with per-field
+  setters
+- **Listing, aggregation, JOIN** — consequences of `Read<Domain, Field>` assuming
+  a single instance
+
+See [`research-questions.md`](./research-questions.md).
+
+---
+
+## What must be verified
+
+- Field-level mutation can be expressed in types
+- An undeclared mutation is a compile error
+- There is no route to changing a MustNotMutate field
+- **Domain opacity meshes with sqlx** — ✅ **it holds** (measured in T-M1-01 /
+  #13). But "the trust boundary is the repository implementation" does not (ledger
+  path 21)
+- **The derive can reject a `pub` field**
+- The error message points at the contract declaration
+  ([`diagnostics.md`](./diagnostics.md))

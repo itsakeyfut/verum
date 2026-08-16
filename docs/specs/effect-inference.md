@@ -1,200 +1,269 @@
-# Effect Inference & Static Verification
+# Effect inference and static verification
 
-宣言されたContractと実装の乖離を検出する仕組み。および「実装から生成する」代替案。
+Detecting divergence between the declared contract and the implementation, and
+the "generate it from the implementation" alternative.
 
-関連: [`capability-system.md`](./capability-system.md) / [`unverified-boundaries.md`](./unverified-boundaries.md) / [`persistence.md`](./persistence.md)
+Related: [`capability-system.md`](./capability-system.md),
+[`unverified-boundaries.md`](./unverified-boundaries.md),
+[`persistence.md`](./persistence.md).
 
 ---
 
-## なぜ必要か
+## Why it is needed
 
-Contractと実装が乖離した瞬間、Contractはコメントと同じ信頼度に落ちる。これはVerumが否定した状態そのものである。
+The moment a contract and its implementation diverge, the contract drops to the
+credibility of a comment. That is the state Verum exists to reject.
 
 ```text
-Declared Effects  VS  実装が実際に起こす Effect
+Declared effects  VS  the effects the implementation actually causes
 ```
 
 ---
 
-## 採用している方式: Capabilityを型で要求し、rustcに照合させる
+## The approach taken: require capabilities in types and let rustc do the matching
 
 ```text
-Repository の setter が where M: Has<Mutate<User, user::Email>, I> を要求
+A repository setter requires where M: Has<Mutate<User, user::Email>, I>
         ↓
-Endpoint が宣言していない Capability は E::Mutates に含まれない
+A capability the endpoint did not declare is not in E::Mutates
         ↓
-コンパイルエラー
+Compile error
 ```
 
-crate横断の呼び出しグラフ解析（rustc_private / MIR）を書かずに済む。
+This avoids writing a cross-crate call-graph analysis (`rustc_private` / MIR).
 
-### この方式の2つの限界
+### Two limits of this approach
 
-**1. Contract は「上界」でしかない**
+**1. A contract is only an upper bound**
 
-型検査は「実装 ⊆ 契約」の一方向のみ。宣言したのに使わないEffect（過剰宣言）は検出されない。
+Type checking sees one direction only: implementation ⊆ contract. An effect
+declared but never used — over-declaration — is not detected.
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[contract(mutates = [User::name, User::email])]
-// 実装は name しか変えていない → エラーにならない
+// the implementation only changes name → no error
 ```
 
-したがって `mutates = [name, email]` を読んだAIが「このEndpointは name と email を変更する」と解釈すると**誤る**。正しい解釈は「name と email 以外は変更しない」である。
+So an AI reading `mutates = [name, email]` and concluding "this endpoint changes
+name and email" is **wrong**. The correct reading is "it changes nothing but name
+and email".
 
-AI Contextの `enforcement` はこれを区別できる値にする必要がある。
+The `enforcement` field in the AI Context has to carry a value that makes the
+difference visible.
 
 ```json
 "mutates": { "enforcement": "upper_bound_checked" }
 ```
 
-`type_checked` という表記は「双方向に検証済み」と読まれるため使わない。
+The spelling `type_checked` is not used, because it reads as "verified in both
+directions".
 
-**2. 照合の正しさが手書きboilerplateに依存している**
+**2. The correctness of the matching rests on hand-written boilerplate**
 
-`set_email` のwhere節に誤って `Has<Mutate<User, user::Name>, I>` と書いても、それは検出されない。「rustcが照合を代行する」という主張は、**Repository traitを書いた人が間違えていないこと**というより弱い前提に乗っている。
+Writing `Has<Mutate<User, user::Name>, I>` by mistake in `set_email`'s where
+clause is not detected. The claim "rustc does the matching for us" rests on a
+weaker premise than it sounds: **that whoever wrote the repository trait did not
+make a mistake.**
 
-→ Repository **trait定義**のderive生成を優先する（[`persistence.md`](./persistence.md)）。
+→ Generating the repository **trait definition** from a derive takes priority
+([`persistence.md`](./persistence.md)).
 
 ---
 
-## 決定（Q-A）: 型強制と生成の**両方**を持ち、差分を検出器にする
+## Decision (Q-A): keep **both** type enforcement and generation, and make the difference the detector
 
-**2026-08-15 決定。** 却下した案は末尾。
+**Decided 2026-08-15.** The rejected options are at the end.
 
-### 決定の骨子
+### The shape of the decision
 
-目標は2つあり、**別々の機構を要求する**。
+There are two goals, and they **require separate mechanisms.**
 
-| 目標 | 意味 | 機構 |
+| Goal | Meaning | Mechanism |
 |---|---|---|
-| **抜け穴を作らせない** | 宣言していない Effect は起きない = **上界** | 型強制（`Has` + 拡張 trait の where 節）。既に成立 |
-| **嘘を作らせない** | 宣言した Effect は実際に起きる = **下界** | **生成**（`handle` のトークン走査）。型では原理的に出せない |
+| **Leave no bypass** | An undeclared effect does not happen = **upper bound** | Type enforcement (`Has` plus the extension trait's where clause). Already in place |
+| **Leave no lie** | A declared effect actually happens = **lower bound** | **Generation** (scanning `handle`'s tokens). Types cannot produce this in principle |
 
-型検査は「実装 ⊆ 契約」の一方向しか見ないので**過剰宣言を検出できない**（上記§この方式の2つの限界）。したがって `mutates = [name]` が保証するのは「name 以外を変えない」だけで、「name を変える」ではない。**片方だけでは目標の片方しか満たさない。**
+Type checking sees only implementation ⊆ contract, so it **cannot detect
+over-declaration** (§Two limits of this approach above). What `mutates = [name]`
+guarantees is therefore only "nothing but name changes", not "name changes".
+**Either mechanism alone satisfies only half the goal.**
 
 ```text
-declared_ceiling   手書き #[contract] + 型強制  → 「これ以外は起きない」
-observed_effects   handle のトークン走査で生成  → 「これが起きる」
+declared_ceiling   hand-written #[contract] + type enforcement  → "nothing else happens"
+observed_effects   generated by scanning handle's tokens        → "this happens"
 
-observed ⊄ declared     → コンパイルエラー（型半分。既に成立）
-declared \ observed ≠ ∅ → 過剰宣言。CI が落とす（下記）
+observed ⊄ declared     → compile error (the type half; already in place)
+declared \ observed ≠ ∅ → over-declaration. CI fails (below)
 ```
 
-**2つの差分が、[`research-questions.md`](./research-questions.md) §過剰宣言の検出 が挙げていた未解決問題そのものを解く。** 副産物ではなく、差分を取ることがこの決定の主目的である。
+**The difference between the two solves exactly the open problem
+[`research-questions.md`](./research-questions.md) §Detecting over-declaration
+raised.** Taking that difference is the main purpose of this decision, not a
+by-product.
 
-### 生成の範囲 — First PoC は `handle` のみ
+### Scope of generation — the First PoC covers `handle` only
 
-**proc macro は自分が付いたアイテムのトークンしか見えない。** `handle` に付けた属性マクロは本体を全て見られるが、そこから呼ばれる Service の中身は見えない。crate 横断の呼び出しグラフ解析は書かない（本ファイル §採用している方式 が、それを書かずに済むことを利点として挙げている）。
+**A proc macro sees only the tokens of the item it is attached to.** An attribute
+macro on `handle` can see the whole body, but not inside the services that body
+calls. A cross-crate call-graph analysis is not written — §The approach taken
+above lists avoiding it as an advantage.
 
-したがって First PoC の生成範囲は `handle` の中だけであり、**その範囲を AI Context に明示する**。
+The First PoC's generation scope is therefore the inside of `handle`, and **that
+scope is stated explicitly in the AI Context.**
 
 ```json
 "observed": { "fields": ["User::name"], "scope": "handle_only", "deferred": [] }
 ```
 
-`scope` を出さないと AI は下界が全経路に及ぶと誤読する。見えない範囲（Service 本体 / 自由関数コンストラクタ / Repository 実装内部の生 SQL）は [`unverified-boundaries.md`](./unverified-boundaries.md) に記録し AI Context に出す。
+Without `scope`, an AI misreads the lower bound as covering every path. What is
+out of view — service bodies, free-function constructors, raw SQL inside a
+repository implementation — is recorded in
+[`unverified-boundaries.md`](./unverified-boundaries.md) and emitted in the AI
+Context.
 
-**将来の拡張形（未採用・記録のみ）**: Effect を持つアイテムを全て注釈し、各アイテムがフラグメントを出してビルド時に推移閉包を取れば、crate 横断解析なしで Service まで届く。First PoC では Service が範囲外なので採らない。
+**A possible extension, recorded but not adopted**: annotate every item that
+carries an effect, have each emit a fragment, and take the transitive closure at
+build time — that reaches services without a cross-crate analysis. Services are
+out of scope for the First PoC, so it is not taken now.
 
-### 過剰宣言が出たとき — CI が落とす
+### When over-declaration appears — CI fails
 
-**差分は1つの proc macro では計算できない。** 宣言は unit struct の `#[contract(...)]`、実装は `impl Handler for X` の `handle` で、**別のアイテム**だからである。照合はビルド時に、両者が出した成果物を読んで行う。
+**The difference cannot be computed by a single proc macro.** The declaration is
+`#[contract(...)]` on a unit struct and the implementation is `handle` in
+`impl Handler for X` — **different items**. The matching happens at build time,
+reading the artefacts both of them emitted.
 
-> **したがってこれは3層防御のいずれでもない。** macro / equality bound / trait bound のどれでもなく、**ビルド時の第4の機構**である。[`diagnostics.md`](./diagnostics.md) の層の表をこれで読み替えないこと。**コンパイルエラーにはならない** — 型半分（宣言外の Effect）とは強度が違う。
+> **So this is none of the three defence layers.** It is not macro, equality
+> bound or trait bound, but **a fourth mechanism at build time.** Do not read
+> [`diagnostics.md`](./diagnostics.md)'s layer table as covering it. **It does not
+> become a compile error** — its strength differs from the type half (an
+> undeclared effect).
 
 ```text
 error: `User::email` is declared in `mutates` but never mutated in `handle`
   help: remove it from the contract, or mark it `@service` if a Service performs it
 ```
 
-**過剰宣言はセキュリティホールではなく「誤った読み手」を生む問題**なので、CI ゲートで重さとして釣り合う。宣言外の Effect（抜け穴）はコンパイルエラーのまま。
+**Over-declaration is not a security hole; it produces a mistaken reader**, so a
+CI gate is proportionate. An undeclared effect — a bypass — stays a compile
+error.
 
-**逃げ道は明示的にし、使用自体を記録する。** Service が実行する Effect を宣言したい場合は `@service` を付け、`deferred` に出す。`deferred` が空でないことは `unverified_boundaries` にも現れるので、**逃げたこと自体が記録に残る** — `forbidden` が意図の記録装置として機能するのと同じ理屈である。
+**The escape route is explicit, and using it is itself recorded.** To declare an
+effect a service performs, mark it `@service`; it is emitted under `deferred`.
+A non-empty `deferred` also shows up in `unverified_boundaries`, so **the act of
+escaping leaves a record** — the same reasoning that makes `forbidden` work as a
+recorder of intent.
 
-### 前提が未検証である — Phase 1 で spike する
+### The premise is unverified — spike it in Phase 1
 
-> **⚠️ この決定は「トークン走査だけで Contract 全体が復元できる」という前提に乗っており、その前提は一度もコンパイルされていない。**
+> **⚠️ This decision rests on the premise that token scanning alone can
+> reconstruct the whole contract, and that premise has never been compiled.**
 
-下記§却下理由が無効化された経緯 の主張である。このプロジェクトはマクロの能力について両方向に間違えた実績があり（RK-003 / RK-004、T-M1-01 の `E0428`）、`CLAUDE.md` は「コンパイラの振る舞いに関する主張は必ずコンパイルして確かめる」と定めている。
+It is the claim §Rejected options and why below rests on.
+This project has been wrong in both directions about what macros can do
+(RK-003 / RK-004, T-M1-01's `E0428`), and `CLAUDE.md` requires that any claim
+about compiler behaviour be checked by compiling.
 
-**T-M1-07 として Phase 1 に spike を追加した。** [`handler-rules.md`](./handler-rules.md) の実例に対して測る:
+**T-M1-07 has been added to Phase 1 as a spike.** It measures against the worked
+examples in [`handler-rules.md`](./handler-rules.md):
 
-1. `ctx.users().set_name(..)` → `Mutate<User, user::Name>` に復元できるか
-2. `ctx.when::<C>(.., async |..| { .. })` → クロージャ内を `When<C, ..>` に入れられるか
-3. `ctx.after_commit(|ctx| ..)` → スコープを区別できるか
-4. `AuditLog::user_updated(&user)` → **見えないことを確認**する（規約依存であることの実証）
-5. `User::from_repr(..)` → **escape として検出できるか**
+1. `ctx.users().set_name(..)` → can it be reconstructed as `Mutate<User, user::Name>`?
+2. `ctx.when::<C>(.., async |..| { .. })` → can the closure body be placed inside `When<C, ..>`?
+3. `ctx.after_commit(|ctx| ..)` → can the scope be distinguished?
+4. `AuditLog::user_updated(&user)` → **confirm it is invisible** (demonstrating the reliance on convention)
+5. `User::from_repr(..)` → **can it be detected as an escape?**
 
-5 は台帳 path 21 に直接効く。**生成は path 21 を塞がない**（`from_repr` は `ctx.` を通らないので Effect としては現れない）が、**トークン走査は `handle` 内の `from_repr` を見つけられる**ので、塞げなくても**可視化はできる**。#33 が閉じ方を見つけられなかった場合の最低限の担保になる。
+Item 5 bears directly on ledger path 21. **Generation does not close path 21** —
+`from_repr` does not go through `ctx.`, so it never appears as an effect — but
+**token scanning can find a `from_repr` inside `handle`**, so even without
+closing it, it **can be made visible.** That is the minimum guarantee if #33
+fails to find a way to close it.
 
-### 却下した案と理由
+### Rejected options and why
 
-| 案 | 却下理由 |
+| Option | Reason for rejection |
 |---|---|
-| **型強制のみ（現状維持）** | 「嘘を作らせない」という目標の後半を達成しないことを明示的に認めることになる。`type_checked` を禁止語にして誤読を防いでいるのは、**嘘を防ぐ代わりに読めることを諦めている**状態であり、目標と整合しない |
-| **生成のみ** | 閉ループ（AI が違反したまま前進できず、人間のレビューゲートを介さずに自己修正する）を失う。`forbidden`（事前の意図表明）は生成では表現できない。生成は**記述であって防止ではない** |
-| **生成を主にし型は最小核だけ** | 概念数（約40）が減り Q-B の token 収支は改善するが、`mutates` の閉ループを失う。**T-M1-07 と Q-B の実測後**に再検討する余地として残す — 今この方向に倒す根拠がない |
-| **crate 横断の呼び出しグラフ解析** | MIR / `rustc_private` 依存。本ファイルがそれを書かずに済むことを利点として挙げており、nightly 依存は MSRV 方針と衝突する |
-| **差分を報告のみにする** | Contract 緩和バイアス（下記§型では解決しない問題）に対して何もしない |
+| **Type enforcement only (status quo)** | Amounts to explicitly conceding the second half of the goal, "leave no lie". Banning the word `type_checked` to prevent misreading means **giving up readability in exchange for preventing lies**, which does not match the goal |
+| **Generation only** | Loses the closed loop (an AI cannot make progress while violating, and self-corrects without a human review gate). `forbidden` — intent stated in advance — cannot be expressed by generation. Generation is **description, not prevention** |
+| **Generation primary, types reduced to a minimal core** | The concept count (~40) drops and Q-B's token budget improves, but the `mutates` closed loop is lost. Left open for reconsideration **after T-M1-07 and Q-B are measured** — there is no basis for leaning this way today |
+| **Cross-crate call-graph analysis** | Depends on MIR / `rustc_private`. This file lists avoiding that as an advantage, and a nightly dependency conflicts with the MSRV policy |
+| **Report the difference only** | Does nothing about contract-relaxation bias (§What types do not solve below) |
 
 ---
 
-## Inferenceが真に必要になる範囲（型強制方式を維持する場合）
+## Where inference is genuinely needed (if type enforcement is kept)
 
-1. **Escape Hatchを通った箇所**
-2. **生SQL**（Repository実装内部）
-3. **自由関数コンストラクタの副作用**
+1. **Anywhere an escape hatch was used**
+2. **Raw SQL** (inside a repository implementation)
+3. **Side effects of free-function constructors**
 
-いずれも `handle` のトークン走査では見えない。ただし範囲が限定されるため後付けできる。
+None of these is visible to a token scan of `handle`. The scope is bounded,
+though, so it can be added later.
 
 ---
 
-## 信頼境界としての Repository 実装
+## The repository implementation as a trust boundary
 
 ```text
-Endpoint / Service 層  → 型で保証される（rustcが照合）
-Repository 実装        → 信頼境界（レビュー・監査の対象）
-DB                     → 対象外
+Endpoint / service layer  → guaranteed by types (rustc does the matching)
+Repository implementation → trust boundary (subject to review and audit)
+DB                        → out of scope
 ```
 
-> **⚠️ 上の図の1行目は現時点では成立していない**（T-M1-01 / #13 で実測）。台帳 **path 21** が開いている間、Endpoint / Service 層の普通のコードが Capability も Repository も SQL も `unsafe` も無しに `User::from_repr(UserRepr { .. })` で Domain を捏造できる。図は path 21 を閉じたあとの姿である。詳細は [`persistence.md`](./persistence.md) §判定。
+> **⚠️ The first line above does not hold today** (measured in T-M1-01 / #13).
+> While ledger **path 21** is open, ordinary code in the endpoint or service layer
+> can forge a domain with `User::from_repr(UserRepr { .. })` — no capability, no
+> repository, no SQL, no `unsafe`. The diagram describes the state after path 21
+> is closed. Detail in [`persistence.md`](./persistence.md) §Verdict.
 
-境界を狭める手段は [`persistence.md`](./persistence.md) を参照。すべての未検査境界は [`unverified-boundaries.md`](./unverified-boundaries.md) に列挙し、AI Contextに出力する。
+Means of narrowing the boundary are in [`persistence.md`](./persistence.md).
+Every unchecked boundary is listed in
+[`unverified-boundaries.md`](./unverified-boundaries.md) and emitted in the AI
+Context.
 
 ---
 
-## 型では解決しない問題: Contract緩和バイアス
+## What types do not solve: contract-relaxation bias
 
-AIはコンパイルエラーに対して**実装を直すよりContractを1行広げる方を選ぶ**。
+Faced with a compile error, an AI **widens the contract by one line rather than
+fixing the implementation.**
 
 ```text
 error: undeclared mutation `User::status`
   help: add `User::status` to the contract, or remove this call
-        ↑ AIはこちらを選びやすい
+        ↑ the AI tends to pick this one
 ```
 
-Contractが「実装を拘束する契約」ではなく「実装に追従して広がるラベル」になった時点で、型検査は無意味になる。しかも**「型で保証されている」という安心感がレビュアの注意をそらす**ため、Axumで同じバグを書いた場合より発見しにくくなる逆転が起こりうる。
+Once a contract stops being "a contract constraining the implementation" and
+becomes "a label that widens to follow the implementation", type checking is
+meaningless. Worse, **the reassurance of "it is guaranteed by types" pulls a
+reviewer's attention away**, so the inversion is possible where the same bug is
+*harder* to spot than it would have been in Axum.
 
-これは型システムの問題ではなく運用の問題である。対処は [`unverified-boundaries.md`](./unverified-boundaries.md) を参照（CIでContract拡大差分を検出する等）。
+This is an operational problem, not a type-system problem. Countermeasures are in
+[`unverified-boundaries.md`](./unverified-boundaries.md) — detecting
+contract-widening diffs in CI, among others.
 
 ---
 
-## 保証手段の優先順位
+## Priority of the guarantee mechanisms
 
 ```text
-Type System → AST → Static Analyzer → Code Generator → Compiler
+Type system → AST → static analyser → code generator → compiler
 ```
 
-目標:
+The goal:
 
-> AIが間違ったコードを書いても、実行前に契約違反として検出できる。
+> Even when an AI writes wrong code, it can be caught as a contract violation
+> before it runs.
 
-ただし**「すべての違反を検出できる」とは主張しない**。検出範囲を [`unverified-boundaries.md`](./unverified-boundaries.md) で明示する。
+But **it is not claimed that every violation is caught.** The scope of detection
+is stated in [`unverified-boundaries.md`](./unverified-boundaries.md).
 
 ---
 
-## 優先度
+## Priority
 
-First PoCでは Inference を実装しない。Capability方式でどこまでカバーできるかを実測し、残った隙間に対してのみ設計する。
+Inference is not implemented in the First PoC. How far the capability approach
+reaches is measured first, and only the gaps left over are designed for.
 
-[`../roadmap/roadmap.md`](../roadmap/roadmap.md) を参照。

@@ -1,246 +1,298 @@
-# Evaluation — AI Coding Benchmark
+# Evaluation — the AI coding benchmark
 
-AI Codingを第一級の設計制約として扱うための測定指標と、実施済みの実験結果。
+The metrics that make AI coding a first-class design constraint, and the results
+of the experiment already run.
 
-関連: [`../roadmap/roadmap.md`](../roadmap/roadmap.md) / [`unverified-boundaries.md`](./unverified-boundaries.md) / [`effect-inference.md`](./effect-inference.md)
+Related: [`unverified-boundaries.md`](./unverified-boundaries.md),
+[`effect-inference.md`](./effect-inference.md).
 
 ---
 
-## 原則
+## Principle
 
-Framework APIの設計時に、人間向けのErgonomicsだけではなく以下を第一級の指標として扱う。
+When designing the framework API, treat the following as first-class metrics
+alongside human ergonomics.
 
 - AI discoverability / AI context size / AI ambiguity
 - AI error rate / AI exploration cost
-- Specification violation rate / Unexpected behavior rate
+- Specification violation rate / unexpected behaviour rate
 
 ---
 
-# 実施済み実験: Q-C 前提検証（2026-08-14）
+# The experiment already run: Q-C premise check (2026-08-14)
 
-Verumの型設計に着手する前に、**コードを1行も書かずに前提を検証する**実験を実施した。
+Before starting on Verum's type design, an experiment was run to **check the
+premises without writing a line of code.**
 
-## 実験設計
+## Design
 
-同一の開発タスクを3条件でAIエージェントに解かせ、token / 探索コスト / 正答率 / 契約違反時の振る舞いを比較した。
+The same development task was given to an AI agent under three conditions,
+comparing tokens, exploration cost, accuracy, and behaviour on a contract
+violation.
 
-| 条件 | 内容 |
+| Condition | Contents |
 |---|---|
-| **条件1** | 素の Axum + sqlx（7ファイル、コメントなし） |
-| **条件2** | 条件1と同一のコード + **実装から静的解析で生成した `CONTRACTS.json`** |
-| **条件3** | Verum 形式の Contract + Handler + `CHEATSHEET.md`（フレームワーク作法を圧縮したもの） |
+| **1** | Plain Axum + sqlx (7 files, no comments) |
+| **2** | The same code as 1, plus a **`CONTRACTS.json` generated from the implementation by static analysis** |
+| **3** | A Verum-form contract + handler + `CHEATSHEET.md` (the framework's conventions, compressed) |
 
-条件2が最も重要な比較対象である。**Verumの「読む側の利益」だけを型強制なしで得た状態**であり、条件3との差が型強制の追加価値になる。
+Condition 2 is the important comparison. It is **Verum's reader-side benefit
+without the type enforcement**, so the gap between 2 and 3 is what the
+enforcement adds.
 
-### 題材
+### The subject
 
-User Domain（7フィールド）に対する4 Endpoint（GET / PUT / POST suspend / DELETE）。`PUT /users/{id}` は name と email を更新し、email変更時のみ確認メールを送る。**status は触らない。**
+A User domain (7 fields) with 4 endpoints (GET / PUT / POST suspend / DELETE).
+`PUT /users/{id}` updates name and email, and sends a confirmation mail only when
+the email changed. **It does not touch status.**
 
-条件1では `UserRepository::save` がフルロー UPDATE を発行する（現実的な実装だが、Field単位の不変性が実装から読み取りにくくなる）。
+In condition 1, `UserRepository::save` issues a full-row UPDATE — a realistic
+implementation, but one that makes per-field immutability hard to read off the
+code.
 
-### タスク
+### The tasks
 
-| タスク | 内容 | 測るもの |
+| Task | Contents | What it measures |
 |---|---|---|
-| **A（調査）** | `PUT /users/{id}` は何を変更し、何を変更せず、どの条件で外部サービスを呼ぶか | 理解の正確さ / 探索コスト |
-| **B（機能追加）** | `PATCH /users/{id}/email` を追加。**email以外は変更してはならない** | 要件が実装に落ちるか |
-| **C（仕様変更）** | 「email変更時に status を Unverified に戻す」を実装 | **Contract緩和バイアス** |
+| **A (investigate)** | What does `PUT /users/{id}` change, what does it leave alone, and under what condition does it call an external service? | Accuracy of understanding / exploration cost |
+| **B (add a feature)** | Add `PATCH /users/{id}/email`. **Nothing but email may change** | Whether the requirement lands in the implementation |
+| **C (change the spec)** | Implement "reset status to Unverified when the email changes" | **Contract-relaxation bias** |
 
-タスクCが本題である。statusは条件2では `must_not_mutate`、条件3では `forbidden` に宣言されており、要件と契約が矛盾する状況を作った。
+Task C is the point. `status` is declared `must_not_mutate` in condition 2 and
+`forbidden` in condition 3, creating a situation where the requirement and the
+contract contradict each other.
 
 ---
 
-## 定量結果
+## Quantitative results
 
-| 指標 | 条件1 素のAxum | 条件2 Axum+生成JSON | 条件3 Verum |
+| Metric | 1. plain Axum | 2. Axum + generated JSON | 3. Verum |
 |---|---|---|---|
-| 与えた情報量 | 3,007 tokens | 4,198 tokens | **3,213 tokens** |
-| うちフレームワーク学習コスト | 0 | 0 | 1,067（CHEATSHEET） |
-| コード本体のみ | 3,007 | 3,007 | **2,146** |
-| 被験者の総トークン | 39,790 | 48,246 | 47,931 |
-| **ツール呼び出し数** | 14 | 18 | **12** |
-| タスクA 正答 | **❌ statusが漏れた** | ✅ | ✅ |
+| Information supplied | 3,007 tokens | 4,198 tokens | **3,213 tokens** |
+| of which framework learning cost | 0 | 0 | 1,067 (CHEATSHEET) |
+| Code alone | 3,007 | 3,007 | **2,146** |
+| Subject's total tokens | 39,790 | 48,246 | 47,931 |
+| **Tool calls** | 14 | 18 | **12** |
+| Task A correct | **❌ missed status** | ✅ | ✅ |
 
-### token収支
+### The token budget
 
-**Verumのコード本体は29%短い**（2,146 vs 3,007）。Service層が消えるため。
-
-```text
-Endpoint 4本での節約  : 861 tokens
-CHEATSHEET のコスト   : 1,067 tokens
-────────────────────────────────
-損益分岐点            : Endpoint 約5本
-```
-
-**Endpoint 5本未満のプロジェクトでは token 収支が赤字になる。** [`../concepts.md`](../concepts.md) の「数千行の代わりに数十〜数百token」は無条件には成立しない。
-
----
-
-## 質的結果
-
-### タスクA — 根拠の強度に差が出た
-
-条件1は `status` を「絶対に変更されない」から**漏らした**。
-
-根拠として挙げたものを比較すると差が明確である。
-
-| 条件 | 根拠 |
-|---|---|
-| 条件2 | 「`save` はフルロー UPDATE だが、**サービス層で name/email 以外を書き換えないため**、読み込んだ値がそのまま書き戻される」 |
-| 条件3 | 「`mutates`/`forbidden` どちらにも入っておらず、**書き込み手段がない = コンパイラレベルで書けない**」 |
-
-条件2は**実装の観察**、条件3は**保証**である。同じ結論だが強度が違う。
-
-### タスクB — 要件が型に落ちたかどうか
-
-「email以外のフィールドは変更してはならない」に対して:
-
-- **条件1・2**: `save()` を呼ぶため**全カラムをUPDATE**している。要件を満たしていない（同時実行で他フィールドのlost updateが起きる）。条件2は「関数単体ではimmutableなフィールドが守られているか分かりにくい」と指摘したが、lost updateには言及なし
-- **条件3**: `mutates = [User::email]` + `forbidden = [User::name, User::status, User::password_hash]` と宣言。**要件が型に落ちている**
-
-### タスクC — 最も重要な結果
-
-**3条件すべてがstatus変更を実装し、誰も疑問を呈さなかった。**
-
-| 条件 | 振る舞い | 契約の最終状態 |
-|---|---|---|
-| 条件1 | 3行追加 | 契約情報が存在しない |
-| 条件2 | 3行追加 | **CONTRACTS.jsonを更新せず → 実装と契約が乖離** |
-| 条件3 | `mutates` にstatus追加 + **`forbidden` からstatusを削除** | 契約が更新された |
-
-判明したことが2つある。
-
-#### 1. 型強制でも緩和バイアスは防げない
-
-条件3は `forbidden = [User::status]` という明示的な「絶対に変更しない」宣言を、要件に合わせて**削除した**。[`unverified-boundaries.md`](./unverified-boundaries.md) に記した「型では解決しない問題」が実証された。
-
-#### 2. しかし型強制は緩和を可視化する
-
-条件2の被験者はCONTRACTS.jsonを更新せず、こう述べた。
-
-> `CONTRACTS.json` は「ビルド時に静的解析で生成される」ファイルであり […] 今回は更新していない […] **実装とコントラクトの不整合が生まれたままになる点は運用上の弱点**
-
-**乖離がdiffに現れない。** 一方条件3は `forbidden` からの削除という明示的な操作がdiffに残る。
-
----
-
-## Q-A（生成方式を採るか）への含意
-
-[`effect-inference.md`](./effect-inference.md) で「生成物は定義上drift しない」と記述していたが、正確には「**生成が実行されれば** drift しない」である。実行されなければ乖離は不可視のまま残る。
-
-**型強制の追加価値は「緩和を防ぐこと」ではなく、「CIを待たずにその場で乖離が表面化すること」だった。**
-
-生成方式でもCIで再生成 + 差分検査を強制すれば同等の効果が得られる。差は「検出タイミング」（コンパイル時 vs CI）に絞られる。
-
----
-
-## Q-B（token収支）への含意
-
-| 主張 | 実測 |
-|---|---|
-| Endpointを概観するtoken量 | 条件3が最小（コード29%短い、ツール呼び出し12回で最少） |
-| Endpointを編集するtoken量 | 条件間で大差なし。条件2が最大（JSONを追加で読むため） |
-| フレームワーク学習コスト | 条件3のみ1,067 tokens。**Endpoint 5本未満では赤字** |
-
----
-
-## 副産物: 実験で発見された仕様の穴
-
-被験者が判断に迷った点はすべて実在の仕様欠落だった。
-
-| 指摘 | 対応 |
-|---|---|
-| **conditional mutationの宣言場所が未定義** | `when` ブロック内に `mutates` を書くのか、トップレベルに書くのか。ドキュメント間で矛盾していた → [`conditional-effects.md`](./conditional-effects.md) で仕様化 |
-| **`forbidden` の意味論が未記載** | 「マクロが実際に何を検証するのか確証がない」 → [`mutation-contract.md`](./mutation-contract.md) で仕様化 |
-| **`operation` の値集合が不明** | 「存在しないenum variantを捏造するリスクを避け、既存の `Update` を再利用した」 → [`research-questions.md`](./research-questions.md) の指摘が実証された |
-| **サポートするHTTP Method一覧が未記載** | PATCHが使えるか不明のまま「標準的なフレームワークなら対応と仮定」 |
-
-**「AIが判断に迷った点」は仕様の穴を検出する指標として機能する。** 今後の実験でも必ず収集する。
-
----
-
-## 実験の限界
-
-結果の解釈に必要な制約を明記する。
-
-1. **各条件1回のみ** — 統計的信頼性はなく、傾向の観察にとどまる
-2. **3タスクを1エージェントに順番に実施させた** — 条件1のタスクA誤答は、タスクC実装後に報告を書いたことによる記憶の混濁が原因の可能性がある（被験者自身が「タスクC実装後はstatusも変わる」と補足している）
-3. **コンパイルできない環境** — 条件3の「型が強制する」は被験者の**信念**に依存しており、実際にエラーが出たわけではない
-4. **設計者が3条件すべてを書いた** — 特に条件3は理想的すぎる可能性がある
-5. **条件1の `save()` は意図的な罠** — 現実的な実装だが、Verumに有利に働いた
-
----
-
-## 結論
-
-| 主張 | 結果 |
-|---|---|
-| Endpoint単位の不変性が読み取れる | ✅ 条件1は誤答、条件3は正答かつ根拠が「保証」 |
-| 探索コストが下がる | ✅ ツール呼び出し 12 vs 14 vs 18 |
-| token収支が黒字 | ⚠️ **Endpoint 5本以上で黒字**。それ未満は赤字 |
-| 緩和バイアスを防ぐ | ❌ **防げない** |
-| 緩和を可視化する | ✅ **これが型強制の実質的価値** |
-
-**目的の再設定が妥当である。** 「AIが読むtoken量を減らす」は条件付きでしか成立せず、しかも条件2（生成メタデータ）でほぼ同等の効果が得られる。
-
-型強制が条件2に勝った点は「**契約の更新を強制し、緩和をdiffに残すこと**」に絞られる。これを中核の主張に据えるのが実測に合う。
-
----
-
-# 継続的な測定指標
-
-## 測定項目と方法
-
-> レビューで「指標名だけでは実験を再現できない」と指摘されたため、測定方法を定義する。
-
-| 指標 | 測定方法 | 自動化 |
-|---|---|---|
-| 与えた情報量（token） | プロンプトに埋め込んだバイト数 ÷ 3.5 | 可 |
-| 探索コスト | エージェントのツール呼び出し回数（Read / Grep / Glob） | 可 |
-| 総トークン | エージェントハーネスの usage レポート | 可 |
-| 理解の正答率 | タスクAの4問に対する採点（ゴールデン解答との照合） | 手動 |
-| 要件充足率 | タスクBの実装がゴールデン実装と同じFieldのみを変更しているか | 手動 |
-| **契約緩和の発生** | タスクCで契約を広げたか / 疑問を呈したか / 契約を放置したか | 手動 |
-| **緩和の可視性** | 緩和がdiffに現れるか | 手動 |
-| 判断に迷った点の数 | 被験者の自己報告 | 手動 |
-| iteration数 / コンパイルエラー回数 | **First PoC後に測定可能** | 可 |
-
-## 実験プロトコル
+**Verum's code is 29% shorter** (2,146 vs 3,007), because the service layer
+disappears.
 
 ```text
-1. 同一の題材（User Domain + 4 Endpoint）を3条件で用意する
-2. 各条件で fresh context のエージェントに同一タスク文を与える
-3. タスクA → B → C の順に実施させる
-4. 「読んだファイル」と「判断に迷った点」を自己報告させる
-5. 実験の意図は伝えない（ホーソン効果を避ける）
+saved across 4 endpoints  : 861 tokens
+cost of the CHEATSHEET    : 1,067 tokens
+────────────────────────────────────────
+break-even                : about 5 endpoints
 ```
 
-### 次回改善すべき点
-
-- **タスクごとに別エージェントを使う**（タスク間の記憶の混濁を避ける）
-- **各条件を3回繰り返す**（1回では傾向しか見えない）
-- **条件のコードを第三者に書かせる**（設計者バイアスを避ける）
-- **First PoC後はコンパイル可能にする**（iteration数を測る）
+**Below 5 endpoints the token budget is negative.**
+[`../concepts.md`](../concepts.md)'s "tens to hundreds of tokens instead of
+thousands of lines" does not hold unconditionally.
 
 ---
 
-## Kill criteria — 方針転換の基準
+## Qualitative results
 
-前提が偽だった場合の判断基準を事前に定める。
+### Task A — the strength of the evidence differed
 
-| 条件 | 判断 |
+Condition 1 **missed** `status` from "never changed".
+
+Comparing the evidence each gave makes the difference clear.
+
+| Condition | Evidence given |
 |---|---|
-| 条件2（生成メタデータ）に対して、条件3の**緩和可視化以外**の優位が実測で確認できない | **型強制の範囲をGET read-only / forbidden / Domainアクセス制限の3項目に縮小**し、残りを生成方式に移す |
-| Endpoint 5本規模でtoken収支が赤字のまま | 目的を「token削減」から「強制」に完全に付け替え、`ai-context.md` をクリティカルパスから外す |
-| コンパイル時間がAxum比で2倍を超える | 型レベル演算の範囲を縮小（`Has` の対象をカテゴリ別に絞る） |
-| First PoCで「Domain不透明化 × sqlx」が成立しない | Domainの公開形式を再設計。成立しなければField単位Mutationの型強制自体を再検討 |
+| 2 | "`save` is a full-row UPDATE, but **because the service layer does not rewrite anything except name/email**, the values read are written straight back" |
+| 3 | "It is in neither `mutates` nor `forbidden`, so **there is no means of writing it — it cannot be written at the compiler level**" |
 
-**Axumを外す判断には3つの実測基準があるのに、プロジェクト自体の中止基準がない**という状態を解消するために設ける。
+Condition 2 is **an observation of the implementation**; condition 3 is **a
+guarantee**. Same conclusion, different strength.
+
+### Task B — whether the requirement landed in types
+
+Against "no field other than email may change":
+
+- **Conditions 1 and 2**: both call `save()`, so they **UPDATE every column**. The
+  requirement is not met (a concurrent write loses an update on another field).
+  Condition 2 noted that "it is hard to tell from the function alone whether the
+  immutable fields are protected", but said nothing about lost updates.
+- **Condition 3**: declared `mutates = [User::email]` plus
+  `forbidden = [User::name, User::status, User::password_hash]`. **The requirement
+  landed in types.**
+
+### Task C — the most important result
+
+**All three conditions implemented the status change, and none of them
+questioned it.**
+
+| Condition | Behaviour | Final state of the contract |
+|---|---|---|
+| 1 | 3 lines added | No contract information exists |
+| 2 | 3 lines added | **CONTRACTS.json not updated → implementation and contract diverged** |
+| 3 | status added to `mutates` + **status removed from `forbidden`** | The contract was updated |
+
+Two things came out of this.
+
+#### 1. Type enforcement does not prevent relaxation bias either
+
+Condition 3 **deleted** an explicit "this is never changed" declaration —
+`forbidden = [User::status]` — to fit the requirement. The "problem types do not
+solve" recorded in [`unverified-boundaries.md`](./unverified-boundaries.md) was
+demonstrated.
+
+#### 2. But type enforcement makes relaxation visible
+
+The subject in condition 2 did not update CONTRACTS.json, and said:
+
+> `CONTRACTS.json` is a file "generated by static analysis at build time" […] I
+> have not updated it this time […] **leaving an inconsistency between the
+> implementation and the contract is an operational weakness**
+
+**The divergence does not appear in the diff.** Condition 3, by contrast, leaves
+an explicit deletion from `forbidden` in the diff.
 
 ---
 
-## 比較対象
+## What this implies for Q-A (whether to adopt generation)
 
-従来のRust Web Framework（Axum / Actix Web / Loco）および**生成メタデータ付きAxum**で同一課題を実装させ、上記指標を比較する。
+[`effect-inference.md`](./effect-inference.md) said "a generated artefact cannot
+drift by construction". More precisely: it cannot drift **if the generation is
+run.** If it is not run, the divergence stays invisible.
 
-**生成メタデータ付きAxumを比較対象に含めることが重要である。** これがVerumの真の競合であり、素のAxumとの比較では型強制の価値を測れない。
+**What type enforcement adds is not "preventing relaxation" but "surfacing the
+divergence on the spot, without waiting for CI".**
+
+The generation approach gets an equivalent effect if CI enforces regeneration
+plus a diff check. The difference narrows to **when it is detected** (compile
+time vs CI).
+
+---
+
+## What this implies for Q-B (the token budget)
+
+| Claim | Measured |
+|---|---|
+| Tokens to survey an endpoint | Condition 3 lowest (29% shorter code, fewest tool calls at 12) |
+| Tokens to edit an endpoint | Little difference; condition 2 highest (it reads the JSON as well) |
+| Framework learning cost | Condition 3 only, 1,067 tokens. **Negative below 5 endpoints** |
+
+---
+
+## A by-product: gaps in the specification the experiment found
+
+Every point the subject hesitated over turned out to be a real gap.
+
+| Observation | Response |
+|---|---|
+| **Where a conditional mutation is declared was undefined** | Inside the `when` block, or at the top level? The documents contradicted each other → specified in [`conditional-effects.md`](./conditional-effects.md) |
+| **`forbidden`'s semantics were unwritten** | "There is no confirmation of what the macro actually checks" → specified in [`mutation-contract.md`](./mutation-contract.md) |
+| **The value set of `operation` was unknown** | "To avoid the risk of inventing an enum variant that does not exist, I reused the existing `Update`" → the concern raised in [`research-questions.md`](./research-questions.md) was demonstrated |
+| **The list of supported HTTP methods was unwritten** | Whether PATCH was available stayed unknown; "assumed a standard framework supports it" |
+
+**"Where the AI hesitated" works as an indicator of gaps in the specification.**
+Collect it in every future experiment.
+
+---
+
+## Limits of the experiment
+
+The constraints needed to interpret the results.
+
+1. **One run per condition** — no statistical confidence; this is an observation
+   of a tendency.
+2. **Three tasks run in sequence by one agent** — condition 1's wrong answer on
+   task A may be memory contamination from writing the report after implementing
+   task C (the subject itself added "after task C, status changes too").
+3. **Nothing could be compiled** — condition 3's "the types enforce it" rests on
+   the subject's **belief**; no error was ever produced.
+4. **The designer wrote all three conditions** — condition 3 in particular may be
+   unrealistically ideal.
+5. **Condition 1's `save()` is a deliberate trap** — realistic, but it worked in
+   Verum's favour.
+
+---
+
+## Conclusion
+
+| Claim | Result |
+|---|---|
+| Per-endpoint immutability is readable | ✅ Condition 1 wrong, condition 3 right and its evidence is a "guarantee" |
+| Exploration cost falls | ✅ 12 vs 14 vs 18 tool calls |
+| The token budget is positive | ⚠️ **Positive at 5+ endpoints.** Negative below that |
+| Relaxation bias is prevented | ❌ **It is not** |
+| Relaxation is made visible | ✅ **This is the substantive value of type enforcement** |
+
+**Restating the objective is warranted.** "Reduce the tokens an AI reads" holds
+only conditionally, and condition 2 (generated metadata) gets nearly the same
+effect.
+
+Where type enforcement beat condition 2 narrows to **forcing the contract to be
+updated, and leaving the relaxation in the diff.** Putting that at the centre of
+the claim matches the measurements.
+
+---
+
+# Continuing metrics
+
+## What is measured and how
+
+> A review pointed out that a metric name alone does not let anyone reproduce the
+> experiment, so the method is defined here.
+
+| Metric | Method | Automatable |
+|---|---|---|
+| Information supplied (tokens) | Bytes embedded in the prompt ÷ 3.5 | Yes |
+| Exploration cost | The agent's tool-call count (Read / Grep / Glob) | Yes |
+| Total tokens | The agent harness's usage report | Yes |
+| Accuracy of understanding | Scoring task A's four questions against a golden answer | Manual |
+| Requirement satisfaction | Whether task B's implementation changes exactly the fields the golden implementation does | Manual |
+| **Contract relaxation occurred** | In task C: did it widen the contract / question it / leave it alone? | Manual |
+| **Visibility of the relaxation** | Does the relaxation appear in the diff? | Manual |
+| Number of points hesitated over | Self-reported by the subject | Manual |
+| Iterations / compile-error count | **Measurable after the First PoC** | Yes |
+
+## Protocol
+
+```text
+1. Prepare the same subject (User domain + 4 endpoints) under three conditions
+2. Give an agent with a fresh context the identical task text under each condition
+3. Run tasks A → B → C in order
+4. Have it self-report "files read" and "points hesitated over"
+5. Do not state the experiment's intent (avoiding the Hawthorne effect)
+```
+
+### To improve next time
+
+- **Use a separate agent per task** (avoiding memory contamination across tasks)
+- **Repeat each condition three times** (one run shows only a tendency)
+- **Have a third party write each condition's code** (avoiding designer bias)
+- **Make it compilable after the First PoC** (so iterations can be counted)
+
+---
+
+## Kill criteria — when to change direction
+
+The criteria for judging that a premise was false, fixed in advance.
+
+| Condition | Judgement |
+|---|---|
+| No measured advantage of condition 3 over condition 2 (generated metadata) **other than making relaxation visible** | **Shrink type enforcement to three items** — GET read-only, `forbidden`, and domain access restriction — and move the rest to generation |
+| The token budget stays negative at 5 endpoints | Repoint the objective entirely from "fewer tokens" to "enforcement", and take `ai-context.md` off the critical path |
+| Compile time exceeds 2× Axum's | Shrink the scope of type-level computation (narrow `Has`'s subjects by category) |
+| "Domain opacity × sqlx" does not hold in the First PoC | Redesign how a domain is exposed. If it still does not hold, reconsider field-level mutation enforcement itself |
+
+These exist to fix the state where **there are three measured criteria for
+dropping Axum but none for stopping the project.**
+
+---
+
+## What to compare against
+
+Implement the same problem in the established Rust web frameworks (Axum /
+Actix Web / Loco) **and in Axum with generated metadata**, and compare the
+metrics above.
+
+**Including Axum-with-generated-metadata matters.** That is Verum's real
+competitor; a comparison against plain Axum cannot measure what the type
+enforcement is worth.

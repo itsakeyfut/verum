@@ -94,8 +94,8 @@ A typo in a field name is the most frequent error.
 > ([`../specs/rust-type-model.md`](../specs/rust-type-model.md), measured), so it
 > has no way to know `struct User`'s fields. The suggestion comes from **rustc's
 > name resolution**; all the macro can do is expand a reference that resolves.
-> Detail in [`../specs/diagnostics.md`](../specs/diagnostics.md) §Nonexistent
-> field.
+> Detail in [`../specs/diagnostics.md`](../specs/diagnostics.md) §A
+> nonexistent field.
 
 ```text
 error[E0412]: cannot find type `Statuss` in module `user`

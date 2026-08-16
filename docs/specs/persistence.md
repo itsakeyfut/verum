@@ -1,17 +1,20 @@
 # Persistence
 
-永続化層（DBアクセス）のスコープと信頼境界。
+The scope of the persistence layer (database access) and its trust boundary.
 
-関連: [`mutation-contract.md`](./mutation-contract.md) / [`unverified-boundaries.md`](./unverified-boundaries.md) / [`effect-inference.md`](./effect-inference.md)
+Related: [`mutation-contract.md`](./mutation-contract.md),
+[`unverified-boundaries.md`](./unverified-boundaries.md),
+[`effect-inference.md`](./effect-inference.md).
 
 ---
 
-## 決定: Repository traitのみ提供する
+## Decision: provide the repository trait only
 
-Verumは**DBを知らない**。Repository traitのみを定義し、実装は利用者がsqlx等で書く。
+Verum **does not know about databases**. It defines the repository trait only;
+the implementation is written by the user, with sqlx or anything else.
 
 ```rust
-// Verum が定義するのは trait と Capability 制約のみ
+// what Verum defines is the trait and the capability constraints, nothing else
 pub trait UserRepository {
     async fn find(&self, id: UserId) -> Result<User>;
     async fn set_email(&self, u: &mut User, v: Email) -> Result<()>;
@@ -19,12 +22,17 @@ pub trait UserRepository {
 }
 ```
 
-> **Capabilityは引数として渡さない。** 当初 `cap: &Cap<Mutate<User, user::Email>>` を引数に取る形を記載していたが、これは「Capabilityは値として実体化せず `Ctx<'req, E>` の型パラメータで表現する」という方針（[`rust-type-model.md`](./rust-type-model.md)）と矛盾するため削除した。
+> **Capabilities are not passed as arguments.** An earlier version took
+> `cap: &Cap<Mutate<User, user::Email>>` as a parameter. That contradicts the
+> policy that capabilities are never materialised as values but expressed as type
+> parameters of `Ctx<'req, E>` ([`rust-type-model.md`](./rust-type-model.md)), so
+> it was removed.
 >
-> Capability検査は `Repo<User, R, M>` の拡張traitのwhere節で行う。
+> The capability check happens in the where clause of `Repo<User, R, M>`'s
+> extension trait.
 
 ```rust,ignore   // fragment, not a complete item
-// derive が生成する拡張 trait（Capability 検査はここ）
+// the extension trait the derive generates — the capability check lives here
 pub trait UserRepo<M> {
     fn set_email<I>(&self, u: &mut User, v: Email) -> Result<()>
     where M: Has<Mutate<User, user::Email>, I>;
@@ -33,42 +41,47 @@ pub trait UserRepo<M> {
 impl<R, M> UserRepo<M> for Repo<User, R, M> { ... }
 ```
 
-`Repo<D, R, M>` が公開される唯一のCapability検査面であり、`UserRepository` は素の永続化traitとしてその内側に位置する。
+`Repo<D, R, M>` is the only exposed surface on which capabilities are checked;
+`UserRepository` sits inside it as a plain persistence trait.
 
-### 判断理由
+### Why
 
-[`runtime-stack.md`](./runtime-stack.md) の判断基準と同一。
+The same criterion as [`runtime-stack.md`](./runtime-stack.md):
 
-> **仕様が固まっている概念は自作しない。未解決の設計問題に全リソースを投下する。**
+> **Do not build a concept whose specification is already settled. Put every
+> resource into the unsolved design problems.**
 
-SQL生成・クエリビルダは既に解かれた問題であり、sqlx / SeaORM / Diesel が長年投資している領域。
+SQL generation and query building are solved problems, and an area sqlx / SeaORM
+/ Diesel have invested in for years.
 
 ---
 
-## Domain不透明化との相互運用
+## Interoperating with domain opacity
 
-Domainは不透明型（privateフィールド）として公開される（[`mutation-contract.md`](./mutation-contract.md)）。一方 sqlx の `query_as!` は `pub` フィールドを要求する。
+A domain is exposed as an opaque type with private fields
+([`mutation-contract.md`](./mutation-contract.md)), while sqlx's `query_as!`
+requires `pub` fields.
 
-deriveが `pub(crate)` な `Repr` を生成する。
+The derive generates a `pub(crate)` `Repr`.
 
 ```rust,ignore   // fragment, not a complete item
-// マクロ生成（derive か属性かは未確定 — 下記「未確定の点」を見ること）
+// macro-generated (derive or attribute is undecided — see "What is undecided" below)
 pub(crate) struct UserRepr {
-    pub id:    UserId,      // pub 必須。query_as! は呼び出し側で構造体リテラルに展開する
+    pub id:    UserId,      // pub is required: query_as! expands to a struct literal at the call site
     pub name:  String,
     pub email: Email,
-    // Debug / Clone / Serialize を derive してはならない（台帳 path 3 / 4 が Repr 経由で復活する）
+    // Do not derive Debug / Clone / Serialize — ledger paths 3 / 4 come back through Repr
 }
 
-// Domain は借用可能な Repr を所有していなければならない（newtype はその一形態）
-pub struct User(UserRepr);   // 内側フィールドは pub(crate) ではなく private
+// The domain must own a borrowable Repr (a newtype is one way to do that)
+pub struct User(UserRepr);   // the inner field is private, not pub(crate)
 
 impl User {
     pub(crate) fn from_repr(r: UserRepr) -> Self;
     pub(crate) fn as_repr(&self) -> &UserRepr;
 }
 
-// 利用者の Repository 実装
+// the user's repository implementation
 impl UserRepository for PgUserRepository {
     async fn find(&self, id: UserId) -> Result<User> {
         let repr = sqlx::query_as!(UserRepr, "SELECT * FROM users WHERE id = $1", id)
@@ -78,62 +91,107 @@ impl UserRepository for PgUserRepository {
 }
 ```
 
-### 判定（T-M1-01 / #13。**21プローブ、コンパイル検証済み**）
+### Verdict (T-M1-01 / #13. **21 probes, compile-verified**)
 
-再現: `spikes/domain-opacity-sqlx/`（`bash run.sh` → `21 as specified, 0 unexpected`）。
-**プローブ表がこの節の正典である。** この判定は2回レビューされ、**表は2回とも正しく、散文は2回とも誤っていた**（測定を超えた一般化が計6件）。以下は表が establish したことに限る。
+Reproduce with `spikes/domain-opacity-sqlx/` (`bash run.sh` →
+`21 as specified, 0 unexpected`).
 
-1. **sqlx 連携は成立する。** 上の形はコンパイルし、実行もする。
-2. **「信頼境界 = Repository 実装」は成立しない。** マクロは利用者のクレートで展開されるので `pub(crate)` はアプリクレート全体を指し、Repository の置き場所を知らないため `pub(in ...)` を出せない。同一クレートならあらゆるハンドラが任意の値の Domain を組み、別クレートなら `Repr` が見えない（`E0603` + `E0624`）。→ 台帳 **path 21**
-3. **生成形は未確定。** derive は**入力と同名のアイテムを追加できない**（`E0428`）ので、`pub struct User(UserRepr)` は `#[derive(Domain)]` が出せる形ではない。
+**The probe table is this section's canon.** This verdict was reviewed twice, and
+**the table was right both times while the prose was wrong both times** — six
+generalisations beyond what was measured. What follows is limited to what the
+table established.
 
-**Field-level Mutation の型強制自体は生きている。** 崩れたのは sqlx でも型強制でもなく、`Repr` という横の抜け道である。
+1. **sqlx interoperation works.** The shape above compiles and runs.
+2. **"the trust boundary is the repository implementation" does not hold.** The
+   macro expands in the user's crate, so `pub(crate)` means the whole application
+   crate, and the macro cannot emit `pub(in ...)` because it does not know where
+   the repository lives. In the same crate, any handler can assemble a domain from
+   arbitrary values; in a different crate, `Repr` is invisible (`E0603` + `E0624`).
+   → ledger **path 21**
+3. **The generated shape is undecided.** A derive **cannot add an item with the
+   same name as its input** (`E0428`), so `pub struct User(UserRepr)` is not
+   something `#[derive(Domain)]` can emit.
 
-#### マクロが守らなければならない形（実測）
+**Field-level mutation's type enforcement itself is intact.** What broke is
+neither sqlx nor the type enforcement, but `Repr` as a sideways bypass.
 
-| 制約 | 守らないと |
+#### The shape the macro must preserve (measured)
+
+| Constraint | If violated |
 |---|---|
-| `Repr` のフィールドを**完全 private にしない** | `query_as!` は呼び出し側で構造体リテラルに展開するので `E0451`（`pub(crate)` はクレート内では足りる） |
-| `Repr` に `Debug` / `Clone` / `Serialize` / `Deserialize` を derive しない | 台帳 path 4 / 3 が `Repr` 経由で復活する（**同一クレート内から**。仕様形では外部クレートは `as_repr` に到達できず `E0624`） |
-| Domain の内側フィールドは private（`pub(crate)` にしない） | `u.0.email = v` がクレート内どこからでも通る |
-| Domain は借用可能な `Repr` を**所有**する | 一時値を返す `as_repr` は `E0515`。**newtype はその一形態で、強制ではない** |
+| Do not make `Repr`'s fields **fully private** | `query_as!` expands to a struct literal at the call site, so `E0451` (`pub(crate)` is enough within the crate) |
+| Do not derive `Debug` / `Clone` / `Serialize` / `Deserialize` on `Repr` | Ledger paths 4 / 3 come back through `Repr` (**from inside the same crate**; in the specified shape an external crate cannot reach `as_repr` — `E0624`) |
+| The domain's inner field is private (not `pub(crate)`) | `u.0.email = v` compiles from anywhere in the crate |
+| The domain **owns** a borrowable `Repr` | An `as_repr` returning a temporary is `E0515`. **A newtype is one way to satisfy this, not a requirement** |
 
-**保証範囲は「定義モジュールの外から」であって型の境界ではない。** 定義モジュールとその子からは `u.0.email = v` が通る。マクロは利用者の `struct User` と同じモジュールに展開されるので、その横に書かれたコードは緩い側に立つ。エラーコードも形で変わる — newtype + getter は `E0615`、getter なしは `E0609`、フラットな private 名前付きをモジュール外から触った場合だけ `E0616`。**`E0615` / `E0609` は `#[diagnostic::…]` で差し替えられない**（trait 定義と trait impl にしか付かないため。実測）。
+**The guarantee is "from outside the defining module", not a type boundary.**
+From the defining module and its children, `u.0.email = v` compiles. The macro
+expands in the same module as the user's `struct User`, so code written next to
+it stands on the permissive side. The error code also varies with the shape: a
+newtype plus getter gives `E0615`, no getter gives `E0609`, and only a flat
+private named field touched from outside the module gives `E0616`. **`E0615` and
+`E0609` cannot be replaced with `#[diagnostic::…]`** — those attributes attach
+only to trait definitions and trait impls (measured).
 
-#### 未確定 — #17 / #18 で決める
+#### Undecided — settled in #17 / #18
 
-1. **どのマクロ形にするか。** `as_repr(&self) -> &Repr` は derive で満たせる形が複数ある（利用者が newtype を書いて derive は `Repr` だけ出す / `Repr` を Domain の型エイリアスにする、いずれも実測で通る）。したがって「署名と derive は両立しない」は**測っていない**。測ったのは `E0428` だけである。属性マクロ化は層1 検査を何も失わないが（実測）、`Domain` を derive と名指す記述が **15ファイル / 23箇所**（うち2件は既発行 issue の本文）に連鎖する。versioning 上の破壊性は実質ゼロ（`verum-macros` は何も生成していない）。
-2. **`#[derive(sqlx::FromRow)]` を誰が付けるか。** 利用者は生成されたアイテムに derive を足せない（実測）。パススルー（`#[domain(repr_derive(sqlx::FromRow))]`）は**実装して動作を確認済み** — この形なら生成された derive は利用者クレートで解決されるので `verum-macros` は sqlx に依存しない。「verum が `sqlx::FromRow` を決め打ちで出す」案だけが依存表に反する。
-3. **`pub` フィールド拒否の強制レベルが 1 の選択に依存する。** 属性形ではマクロが入力の `pub` を消費するので**リント**、derive + フラット形では利用者の `pub` が本物なので**保証**。`.claude/commands/bump.md` は強制レベルの変化を破壊的と定めている。
+1. **Which macro shape.** `as_repr(&self) -> &Repr` has several shapes a derive
+   can satisfy (the user writes the newtype and the derive emits only `Repr`; or
+   `Repr` becomes a type alias for the domain — both measured to compile). So
+   "the signature and a derive are incompatible" is **not something that was
+   measured.** What was measured is `E0428` alone. Moving to an attribute macro
+   loses no layer-1 check (measured), but the description of `Domain` as a derive
+   propagates to **15 files / 23 places**, two of which are the bodies of issues
+   already filed. The versioning impact is effectively zero (`verum-macros`
+   generates nothing today).
+2. **Who attaches `#[derive(sqlx::FromRow)]`.** A user cannot add a derive to a
+   generated item (measured). Pass-through
+   (`#[domain(repr_derive(sqlx::FromRow))]`) has been **implemented and confirmed
+   to work** — in that shape the generated derive resolves in the user's crate, so
+   `verum-macros` does not depend on sqlx. Only the option "verum emits
+   `sqlx::FromRow` unconditionally" contradicts the dependency table.
+3. **The enforcement level of rejecting `pub` fields depends on choice 1.** In
+   the attribute shape the macro consumes the input's `pub`, so it is a **lint**;
+   in the derive-plus-flat shape the user's `pub` is real, so it is a
+   **guarantee**. A change of enforcement level is defined as breaking.
 
-#### 代替案（すべて実測。**どれも現状を改善しない**）
+#### Alternatives (all measured. **None improves on the status quo**)
 
-| 代替案 | 実測 |
+| Alternative | Measured |
 |---|---|
-| `Repr` を専用モジュールに置き module privacy で守る | **悪化する。** private モジュール内の `pub` 型にすると `E0446` が出ず trait 経路が開き、外部クレートが射影で全フィールドを読み偽造できる（`-D warnings` でも警告ゼロ） |
-| `Repr` を `pub` にしてフィールドを private | **境界を守らない。** load でき、構造体**リテラル**は `E0451`、`query_as!` は失われ、**それでも偽造される**（呼び出し側が用意した行から `FromRow` が組む） |
-| Repr 変換を `verum` の trait に載せる | `Repr` が `pub(crate)` の間は `E0446`。`pub` にすると開くが、上の射影バイパスがついてくる |
-| **sealed トークン** | **境界にならない**（撤回。以前ここに「唯一の生存候補」と書いた）。トークンは**利用者が実装する trait の引数**でしか渡せないので、ハンドラが3行の `impl Repository` を書けば verum がトークンを手渡す（実測）。by-value では複数行ロードが書けず（`E0382`）`Copy` を強制され、`Copy` にすると静的変数に stash できる |
-| `FromRow` を手実装 / 不透明化を諦める | **未測定** |
+| Put `Repr` in a dedicated module and rely on module privacy | **Worse.** Making it a `pub` type inside a private module suppresses `E0446`, which opens the trait route: an external crate can read every field through a projection and forge one (zero warnings even under `-D warnings`) |
+| Make `Repr` `pub` with private fields | **Does not hold the boundary.** It loads, a struct **literal** is `E0451`, `query_as!` is lost, and **it is still forgeable** (`FromRow` assembles it from rows the caller supplies) |
+| Put the `Repr` conversion on a trait in `verum` | `E0446` while `Repr` is `pub(crate)`. Making it `pub` opens it, and brings the projection bypass above along with it |
+| **A sealed token** | **Not a boundary** (retracted; this was previously written here as "the only surviving candidate"). A token can only be passed **as an argument to a trait the user implements**, so a handler writing a three-line `impl Repository` receives the token from verum (measured). By value it cannot express a multi-row load (`E0382`) and forces `Copy`, and once `Copy` it can be stashed in a static |
+| Hand-write `FromRow` / abandon opacity | **Not measured** |
 
-一般形は「**定義側モジュール内で構造体を組む derive 由来のコンストラクタは何であれ偽造経路**」で、`FromRow` / `Deserialize` / 将来の任意の derive が該当する。`E0451` が閉じるのは構文形ひとつであり、**`Repr` を使える程度に開くと偽造できる程度に開く。**
+The general form is: **any derive-produced constructor that assembles the struct
+inside the defining module is a forging route** — `FromRow`, `Deserialize`, and
+any future derive. `E0451` closes one syntactic form only, and **opening `Repr`
+enough to be usable opens it enough to be forgeable.**
 
-#### 閉じ方の診断上の制約（実測）
+#### The diagnostic constraint on how it is closed (measured)
 
-**可視性で塞ぐと、その診断は永久に文言を持てない。** `E0603` / `E0615` / `E0609` / `E0616` はフィールド・パス解決の診断で trait 解決を経由しないため `#[diagnostic::…]` が届かない。**trait bound で塞ぐと `E0277` になり、`message` と `label` の両方を Verum が書ける**（実測）。`CLAUDE.md` の非交渉事項「経路を塞ぐときは検査済みの代替を用意する」を満たせるのは後者だけである。
+**Close it with visibility and the diagnostic can never carry wording.**
+`E0603` / `E0615` / `E0609` / `E0616` are field- and path-resolution diagnostics
+that do not go through trait resolution, so `#[diagnostic::…]` never reaches
+them. **Close it with a trait bound and it becomes `E0277`, where Verum writes
+both the `message` and the `label`** (measured). Only the latter satisfies
+`CLAUDE.md`'s non-negotiable "when you block a path, provide a checked
+alternative".
 
 ---
 
-## 信頼境界 — Repository実装
+## The trust boundary — the repository implementation
 
-**この決定により、Repository実装が信頼境界になる。**
+**This decision makes the repository implementation the trust boundary.**
 
 ```rust,ignore   // needs a crate or a verum-private module this harness does not carry
 impl UserRepository for PgUserRepository {
     async fn set_email(&self, u: &mut User, v: Email) -> Result<()> {
         sqlx::query!(
             "UPDATE users SET email = $1, status = 'verified' WHERE id = $2",
-            //                            ^^^^^^^^^^^^^^^^^^^ 宣言外のMutation
+            //                            ^^^^^^^^^^^^^^^^^^^ an undeclared mutation
             v, u.id()
         ).execute(&self.pool).await?;
         Ok(())
@@ -141,89 +199,122 @@ impl UserRepository for PgUserRepository {
 }
 ```
 
-この違反は**Verumでは検出できない**。Capabilityの型検査はメソッド呼び出しの可否までしか及ばず、メソッド実装内部のSQLには届かない。
+That violation **cannot be detected by Verum**. The capability type check reaches
+only as far as whether a method may be called; it does not reach the SQL inside
+the method's implementation.
 
-### これは欠陥ではなく、明示された境界である
+### This is not a defect but a stated boundary
 
 ```text
-Endpoint / Service 層  → 型で保証される
-Repository 実装        → 信頼境界（レビュー・監査の対象）
-DB                     → 対象外
+Endpoint / service layer  → guaranteed by types
+Repository implementation → trust boundary (subject to review and audit)
+DB                        → out of scope
 ```
 
-> **⚠️ 上の図の1行目は現時点では成立していない**（T-M1-01 / #13 で実測）。台帳 **path 21** が開いている間、Endpoint / Service 層の普通のコードが Capability も Repository も SQL も `unsafe` も無しに `User::from_repr(UserRepr { .. })` で Domain を捏造できる。図は path 21 を閉じたあとの姿である。
+> **⚠️ The first line above does not hold today** (measured in T-M1-01 / #13).
+> While ledger **path 21** is open, ordinary code in the endpoint or service layer
+> can forge a domain with `User::from_repr(UserRepr { .. })` — no capability, no
+> repository, no SQL, no `unsafe`. The diagram describes the state after path 21
+> is closed.
 
-**AI Contextに `unverified_boundaries` として出力する**（[`unverified-boundaries.md`](./unverified-boundaries.md)）。境界がどこにあるかを文書化しないことが欠陥になる。
+**It is emitted in the AI Context as `unverified_boundaries`**
+([`unverified-boundaries.md`](./unverified-boundaries.md)). What would be a defect
+is failing to document where the boundary sits.
 
 ---
 
-## 信頼境界を狭める手段
+## Ways to narrow the trust boundary
 
-### 1. 1 Field = 1 メソッドを強制する
+### 1. Enforce one field = one method
 
-[`handler-rules.md`](./handler-rules.md) Rule 1 の帰結。各メソッドが1つのカラムしか触らないため、実装は数行で済みレビューが容易になる。
+A consequence of [`handler-rules.md`](./handler-rules.md) Rule 1. Each method
+touches a single column, so the implementation is a few lines and easy to review.
 
-### 2. Repository実装をderiveで生成する（優先度を上げる）
+### 2. Generate the repository implementation from a derive (priority raised)
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[derive(Repository)]
 #[repository(domain = User, table = "users")]
 pub struct PgUserRepository { pool: PgPool }
-// → set_email / set_name / find を自動生成
+// → set_email / set_name / find generated
 ```
 
-生成された実装は定義上Contractに従うため、**信頼境界がVerum内部に移動する**。
+A generated implementation follows the contract by construction, so **the trust
+boundary moves inside Verum.**
 
-> **重要**: Repository **trait 定義**の生成も必要である。Field ごとに `set_<field>` を trait と impl の両方に手書きする状態では、
+> **Important**: generating the repository **trait definition** is needed too.
+> While `set_<field>` is hand-written per field in both the trait and the impl:
 >
-> 1. 新しいDomainを追加するたびにFieldの数だけboilerplateを書く（token効率の主張が「書く」場面で崩れる）
-> 2. **`set_email` のwhere節に誤って `user::Name` を書いても検出されない** — 「rustcが照合を代行する」という主張が、手書きboilerplateの正しさという弱い前提に乗ってしまう
+> 1. Every new domain costs boilerplate proportional to its field count (the
+>    token-efficiency claim collapses on the *writing* side)
+> 2. **Writing `user::Name` by mistake in `set_email`'s where clause is not
+>    detected** — the claim "rustc does the matching for us" ends up resting on the
+>    weak premise that the hand-written boilerplate is correct
 >
-> 当初「将来」としていたが、2の問題があるため**trait定義の生成をimpl生成より先に前倒しする**。
+> This was originally deferred to "later"; because of point 2, **generating the
+> trait definition is moved ahead of generating the impl.**
 
-### 3. 生SQLをEscape Hatchとして明示させる
+### 3. Make raw SQL an explicit escape hatch
 
-複雑なクエリでは Escape Hatch 経由とし、Contractに記録する。
+Complex queries go through an escape hatch and are recorded in the contract.
 
 ```text
 escape_hatch: raw_sql
   reason: "complex aggregation across users and orders"
 ```
 
-> **注意**: 記録は現状**自己申告**である。属性を書き忘れれば記録されない。`escape_hatches: []` を「脱出なし」と読ませてはならない。低レイヤAPIが属性マクロ生成のZST証拠を引数で要求する形にすれば記録漏れが構造的に防げる。それができない範囲は `"unknown"` と出力する。
+> **Note**: the recording is **self-reported** today. Forget the attribute and
+> nothing is recorded. `escape_hatches: []` must not be read as "no escapes". If
+> the low-level API requires a ZST proof produced by an attribute macro as an
+> argument, a missing record becomes structurally impossible. Where that is not
+> achievable, emit `"unknown"`.
 
 ---
 
-## 却下した選択肢
+## Rejected options
 
-### 型付きQuery Builderを持つ
+### A typed query builder
 
-宣言外MutationをDB層まで貫通して防げるが却下。SQL生成は「既に解かれた問題」の自作にあたり、型設計に使う時間が奪われる。複雑なクエリで結局Escape Hatch頼りになりがち。
+It would carry the prevention of undeclared mutations all the way into the DB
+layer, but it is rejected. SQL generation is building a solved problem, and it
+takes time away from the type design. Complex queries tend to fall back on an
+escape hatch anyway.
 
-### UPDATE文の静的検査（Lint）
+### A static check (lint) on UPDATE statements
 
-Query Builderより小さい実装で境界を貫通できる中間解だが、SQLパースが必要で動的SQLに無力、sqlx固有になる。**型設計が固まる前に着手するのは早すぎる**。型設計完了後に再検討。
+An intermediate answer that pierces the boundary with a smaller implementation
+than a query builder, but it needs SQL parsing, is powerless against dynamic SQL,
+and becomes sqlx-specific. **Starting it before the type design has settled is
+premature.** Revisit once the type design is complete.
 
 ---
 
-## 未解決の課題
+## Open problems
 
-### Transaction
+### Transactions
 
-- Endpoint = 1トランザクションを標準とするか
-- 複数Mutationのatomicityを Contract で表現するか
-- **トランザクション内でExternal Effectの発火を型で禁止できるか**
-  - [`handler-rules.md`](./handler-rules.md) Rule 4 で `ctx.after_commit` スコープを提案しているが、Transaction境界の設計と合流させる必要がある
-- Savepoint / ネストしたトランザクションの扱い
-- **部分失敗の意味論** — Contractは「上界」なので「宣言したEffectの部分集合しか起きなかった状態」が表現されていない。`emits: [UserUpdated]` を読んだAIは「更新されたなら必ずイベントが出る」と解釈するが、逆（イベントだけ出て更新されない）も起こる
+- Is endpoint = one transaction the standard?
+- Is the atomicity of several mutations expressed in the contract?
+- **Can firing an external effect inside a transaction be forbidden in types?**
+  - [`handler-rules.md`](./handler-rules.md) Rule 4 proposes the
+    `ctx.after_commit` scope, but it has to be merged with the transaction
+    boundary design
+- Savepoints and nested transactions
+- **The semantics of partial failure** — a contract is an upper bound, so "only a
+  subset of the declared effects happened" is not expressible. An AI reading
+  `emits: [UserUpdated]` concludes "if it was updated, the event is always
+  emitted", but the converse — the event fires and the update does not — happens
+  too
 
-### 楽観ロック / 悲観ロック
+### Optimistic and pessimistic locking
 
-- Field単位setterでは `WHERE id=? AND version=?` のCompare-and-Swapを原子操作として表現できない
-- `SELECT ... FOR UPDATE` に相当する `Lock<Domain>` Effectがない
+- Per-field setters cannot express `WHERE id=? AND version=?` compare-and-swap as
+  an atomic operation
+- There is no `Lock<Domain>` effect corresponding to `SELECT ... FOR UPDATE`
 
-### 一覧 / 集計 / JOIN / N+1
+### Listing, aggregation, JOIN, N+1
 
-`Read<Domain, Field>` が単一インスタンス前提であることの帰結。`find(id)` 以外のRepository APIが仕様に存在しない。
+Consequences of `Read<Domain, Field>` assuming a single instance. No repository
+API other than `find(id)` exists in the specification.
 
-[`research-questions.md`](./research-questions.md) を参照。
+See [`research-questions.md`](./research-questions.md).

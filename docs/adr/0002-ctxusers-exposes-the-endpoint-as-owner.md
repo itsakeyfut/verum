@@ -121,6 +121,6 @@ impl<'req, E: Endpoint> CtxUsers for Ctx<'req, E> where E: Includes<User> { /* .
 ## More Information
 
 * [ADR-0001](./0001-includes-is-implemented-on-the-endpoint.md) — what `Includes` is implemented on
-* `docs/specs/rust-type-model.md` §where節はメソッド側に置く — the measurement behind constraint 2
+* `docs/specs/rust-type-model.md` §The where clause goes on the method — the measurement behind constraint 2
 * `docs/specs/diagnostics.md` — why error wording counts as a feature
-* `docs/specs/capability-system.md` §実現方法 — the corrected site
+* `docs/specs/capability-system.md` §How it works — the corrected site

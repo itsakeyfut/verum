@@ -1,115 +1,133 @@
-# Runtime Stack
+# Runtime stack
 
-どの層に依存し、どの層を自作するか。および依存を隠蔽する運用ルール。
+Which layers are depended on and which are written here, plus the operating rule
+that hides those dependencies.
 
-> 旧 §45 / §53 / §55 / §57 / §58 を統合。決定日: 2026-08-13
+> Consolidates the old §45 / §53 / §55 / §57 / §58. Decided 2026-08-13.
 
-関連: [`middleware.md`](./middleware.md) / [`performance.md`](./performance.md) / [`../roadmap/roadmap.md`](../roadmap/roadmap.md)
+Related: [`middleware.md`](./middleware.md),
+[`performance.md`](./performance.md).
 
 ---
 
-## 前提条件（言語バージョン）
+## Prerequisites (language versions)
 
-| 項目 | 要件 | 理由 |
+| Item | Requirement | Reason |
 |---|---|---|
-| **edition** | **2024** | `when` スコープに async closure (`AsyncFnOnce`) が必須 |
-| **MSRV** | **1.85+** | async closure / `#[diagnostic::do_not_recommend]` |
+| **edition** | **2024** | The `when` scope requires async closures (`AsyncFnOnce`) |
+| **MSRV** | **1.85+** | Async closures / `#[diagnostic::do_not_recommend]` |
 
-`when` の実装で `&user` を貸しつつクロージャに渡す形は、`FnOnce(..) -> Fut` 方式では借用を跨げず成立しない（実コンパイルで確認済み）。async closure が必須要件になる。詳細は [`rust-type-model.md`](./rust-type-model.md) を参照。
-
----
-
-## 判断基準
-
-> **仕様が固まっている概念は自作しない。未解決の設計問題に全リソースを投下する。**
+Lending `&user` while passing it into the closure does not work in the
+`FnOnce(..) -> Fut` form — the borrow cannot cross (confirmed by compiling).
+Async closures are therefore a hard requirement. Detail in
+[`rust-type-model.md`](./rust-type-model.md).
 
 ---
 
-## 決定
+## The criterion
+
+> **Do not build a concept whose specification is already settled. Put every
+> resource into the unsolved design problems.**
+
+---
+
+## The decision
 
 ```text
-Tokio                     — 使う（自作しない）
-Hyper (+ hyper-util)      — 使う（自作しない）
-Tower / tower-http        — 使う（自作しない）
+Tokio                     — used (not rebuilt)
+Hyper (+ hyper-util)      — used (not rebuilt)
+Tower / tower-http        — used (not rebuilt)
 ─────────────────────────────────────────────
-Router                    — Verum自作
-Extractor                 — Verum自作
-Handler / Endpoint        — Verum自作
-Response                  — Verum自作
-Middleware chain          — Verum自作
+Router                    — written in Verum
+Extractor                 — written in Verum
+Handler / Endpoint        — written in Verum
+Response                  — written in Verum
+Middleware chain          — written in Verum
 ─────────────────────────────────────────────
-Effect / Capability       — Verum本体
-Mutation Contract         — Verum本体
-Semantic Contract         — Verum本体
-AI Context                — Verum本体
+Effect / Capability       — Verum proper
+Mutation contract         — Verum proper
+Semantic contract         — Verum proper
+AI Context                — Verum proper
 ```
 
 ---
 
-## 自作しない理由
+## Why these are not rebuilt
 
-| 領域 | 状態 | 担当 |
+| Area | State | Owner |
 |---|---|---|
-| HTTP/1.1, HTTP/2 | RFC 9112 / 9113で確定 | Hyper |
-| CORS | WHATWG Fetchで確定 | tower-http |
-| Content negotiation / Compression | RFC 9110 | tower-http |
-| Tracing span設計 | OpenTelemetry semantic conventions | tower-http |
+| HTTP/1.1, HTTP/2 | Fixed by RFC 9112 / 9113 | Hyper |
+| CORS | Fixed by WHATWG Fetch | tower-http |
+| Content negotiation / compression | RFC 9110 | tower-http |
+| Tracing span design | OpenTelemetry semantic conventions | tower-http |
 
-これらは**教材的で不変**な概念であり、自作しても差別化にならない。
+These are **textbook, unchanging** concepts; rebuilding them differentiates
+nothing.
 
-特にHTTPプロトコル層の自作は、request smuggling / HPACK bomb / h2 rapid reset (CVE-2023-44487) などのセキュリティリスクを自ら抱えることになる。Verumの独自性はHTTPプロトコル層に一切存在しない。
+Rebuilding the HTTP protocol layer in particular means taking on request
+smuggling, HPACK bombs, and h2 rapid reset (CVE-2023-44487) as one's own security
+risks. None of Verum's originality lives in the HTTP protocol layer.
 
-さらに、性能目標である「Axum級」はHyperを使えばほぼ自動達成される。自作した場合、Axum級への到達自体が課題になり、目標を自ら遠ざける。
+And the performance target — Axum-class — comes almost automatically from using
+Hyper. Rebuilt, reaching Axum-class becomes a project in itself, pushing the goal
+further away.
 
 ---
 
-## Axumを使わない理由
+## Why Axum is not used
 
-Axumは0.xのままメジャーバージョンに到達していない。実際に破壊的変更の履歴がある。
+Axum is still 0.x and has not reached a major version. It has a real history of
+breaking changes.
 
 ```text
 0.6 → 0.7
-    axum::Server 削除 → axum::serve
-    hyper 1.0 移行
-    FromRequest 周りの変更
+    axum::Server removed → axum::serve
+    migration to hyper 1.0
+    changes around FromRequest
 
 0.7 → 0.8
-    path syntax 変更（/:id → /{id}）※全ルート定義が壊れる
-    async_trait 削除
-    Option extractor の扱い変更
+    path syntax changed (/:id → /{id}) — every route definition breaks
+    async_trait removed
+    Option extractor handling changed
 ```
 
-加えて、VerumはRouter / Extractor / Handlerを**元々独自に持つ**。つまりAxumの提供価値のほぼ全部を置き換えるのに、その破壊的変更だけを引き受けることになる。
+On top of that, Verum has **its own** router, extractor and handler anyway. It
+would be replacing nearly all of Axum's value while taking on only its breaking
+changes.
 
 ---
 
-## 版安定性の棚卸し
+## Version-stability inventory
 
-| crate | 版 | 判断 |
+| Crate | Version | Judgement |
 |---|---|---|
-| tokio | 1.x | 安定。2020年から互換保証 |
-| hyper | 1.x | 安定。2023年11月に1.0到達 |
-| http / http-body | 1.x | 安定 |
-| tower | 0.5 | 0.xだが`Service` traitは2019年から実質不変 |
-| hyper-util | 0.1 | 0.x。hyper 1.0が低レベルAPIに絞った結果。避けにくい |
-| matchit | 0.8 | 0.x。小さいので自作またはvendoring可 |
+| tokio | 1.x | Stable. Compatibility guaranteed since 2020 |
+| hyper | 1.x | Stable. Reached 1.0 in November 2023 |
+| http / http-body | 1.x | Stable |
+| tower | 0.5 | 0.x, but the `Service` trait has been effectively unchanged since 2019 |
+| hyper-util | 0.1 | 0.x. A consequence of hyper 1.0 narrowing to low-level APIs. Hard to avoid |
+| matchit | 0.8 | 0.x. Small enough to rebuild or vendor |
 
-0.x依存は排除するのではなく、**Verum内部の薄い層に閉じ込める**（下記 Dependency Hiding Rule）。
+0.x dependencies are not excluded but **confined to a thin layer inside Verum**
+(the Dependency Hiding Rule below).
 
 ---
 
-## Dependency Hiding Rule
+## The Dependency Hiding Rule
 
-最重要の運用ルール。
+The most important operating rule.
 
-> **`verum` crateのpublic APIに、置き換え予定の依存の型を1つも出さない。**
+> **Not one type from a dependency that may be replaced appears in the `verum`
+> crate's public API.**
 
-隠蔽が「後で降りる自由」を買う。最初から隠しておけば、Axumを外す時にpublic APIが一切変わらない。逆に露出させたら、二度と外せない。
+Hiding is what buys the freedom to drop down later. Hidden from the start,
+dropping Axum changes the public API not at all. Exposed, it can never be
+dropped.
 
-### 隠すもの（Verumの型で置き換える）
+### What is hidden (replaced by a Verum type)
 
 ```text
-axum::extract::State        ← 最重要
+axum::extract::State        ← the most important
 axum::Router
 axum::response::IntoResponse
 axum::Json
@@ -120,13 +138,16 @@ hyper_util::*
 matchit::*
 ```
 
-#### `State`が最重要な理由
+#### Why `State` is the most important
 
-`State<AppState>`からは何でも取得できる。これを露出させると「そもそも呼び出せない状態を作る」が嘘になり、**Capability Systemが根元から破れる**。
+Anything can be obtained from `State<AppState>`. Exposing it turns "make it
+impossible to call in the first place" into a lie, and **breaks the capability
+system at the root.**
 
-同様に、Axumの`Handler` traitは任意のextractorを任意個受け取れる。これはescape hatchではなく**無申告の抜け穴**である。
+Likewise, Axum's `Handler` trait accepts any number of arbitrary extractors. That
+is not an escape hatch but **an unregistered bypass.**
 
-### 隠さないもの（むしろre-exportする）
+### What is not hidden (re-exported, in fact)
 
 ```text
 http::StatusCode
@@ -135,121 +156,141 @@ http::Method
 http::Uri
 ```
 
-これらはAxum固有ではなく**http 1.x安定**の基盤であり、自作後もまったく同じものを使う。隠すのは無駄。
+These are not Axum-specific but the **stable http 1.x** foundation, and exactly
+the same types will be used after the rewrite. Hiding them is waste.
 
-### 露出させて良いもの
+### What may be exposed
 
-Escape Hatchでは意図的に低レイヤを露出させる。ただし、
+Escape hatches expose the low-level layer deliberately. But:
 
-> **escape hatchを通ったことがContractに記録される**
+> **Going through an escape hatch is recorded in the contract**
 
-これは隠蔽の例外ではなく、隠蔽があって初めて成立する機能である。
+This is not an exception to hiding; it is a feature that only works *because* of
+the hiding.
 
-### Backend traitを今は作らない
+### No backend trait for now
 
-Axumに触るコードは1モジュール（`src/runtime/` 等）に集めるだけとする。
+Code that touches Axum is simply collected into one module (`src/runtime/` or
+similar).
 
-**実装が1つしかないtraitは作らない。** 2つ目のbackend（Hyper backend）が必要になった時点で切り出す。その時点で実装が2つ存在するので、正当な抽象になる。
+**Do not create a trait with one implementation.** Split it out when a second
+backend (a Hyper backend) is needed. At that point two implementations exist, and
+the abstraction is justified.
 
-### PoCで使うAxum機能を最小に絞る
+### Keep the Axum features used in the PoC minimal
 
-使うほど後で外すコストが上がる。
+The more that is used, the more it costs to remove later.
 
 ```text
-使う:
+used:
     Router::route
-    path parameter
-    body 読み取り
-    response 返却
+    path parameters
+    reading the body
+    returning a response
     axum::serve
 
-使わない:
-    State              ← Capability Systemを破壊し、外すコストが最も高い
-    Json extractor     ← Verum独自extractorを使う
-    middleware         ← PoCでは不要
-    WebSocket / SSE    ← PoCの検証項目に含まれない
+not used:
+    State              ← breaks the capability system; the most expensive to remove
+    Json extractor     ← Verum's own extractor is used
+    middleware         ← not needed in the PoC
+    WebSocket / SSE    ← not part of what the PoC verifies
 ```
 
 ---
 
-## 自作範囲と概算（Axumを外す段階）
+## Scope and estimate of what is written here (at the point Axum is dropped)
 
-| 必要なもの | 手段 | 概算 |
+| Needed | Means | Estimate |
 |---|---|---|
-| accept loop + graceful shutdown | `hyper_util::server::conn::auto`（HTTP/1+2自動判定） | ~100行 |
-| path matching | `matchit`または自作（静的 + `{param}` + `{*rest}`） | ~200行 |
-| Response変換 | 独自trait + `http-body-util`の`Full`/`BoxBody` | ~150行 |
-| Extractor | **元々自作予定**（Capabilityベース） | 追加なし |
-| Handler trait | RPITIT + `Send`。**加えてobject-safeな消去レイヤ** | ~100行 |
-| Middleware chain | 自前trait（RPITIT）+ 消去レイヤ | ~200行 |
+| Accept loop + graceful shutdown | `hyper_util::server::conn::auto` (HTTP/1+2 auto-detection) | ~100 lines |
+| Path matching | `matchit`, or written here (static + `{param}` + `{*rest}`) | ~200 lines |
+| Response conversion | An own trait + `http-body-util`'s `Full` / `BoxBody` | ~150 lines |
+| Extractor | **Already planned to be written here** (capability-based) | no addition |
+| Handler trait | RPITIT + `Send`, **plus an object-safe erasure layer** | ~100 lines |
+| Middleware chain | An own trait (RPITIT) + an erasure layer | ~200 lines |
 
-**実質的な追加コストは600〜800行程度。** WebSocket（hyper upgrade + tokio-tungstenite）とSSEを足しても+300行だが、これらは初期PoCに不要。
+**The real additional cost is around 600–800 lines.** Adding WebSocket (hyper
+upgrade + tokio-tungstenite) and SSE is another +300, and neither is needed for
+the initial PoC.
 
-> **消去レイヤが必要な理由**: `async fn` in trait（AFIT）はdyn非互換であり、Routerが `Box<dyn Handler>` を持てない（E0038）。さらにAFITのままではFutureが `Send` にならずhyperのmulti-thread runtimeに載らない。
+> **Why an erasure layer is needed**: `async fn` in trait (AFIT) is dyn
+> incompatible, so the router cannot hold a `Box<dyn Handler>` (E0038). And with
+> AFIT the future is not `Send`, so it does not load onto hyper's multi-thread
+> runtime.
 >
-> - `Send` は RPITIT（`-> impl Future<Output = ..> + Send`）で解決
-> - dyn互換性は derive が `Pin<Box<dyn Future<Output = Response> + Send + '_>>` を返す消去レイヤを生成して解決
+> - `Send` is solved by RPITIT (`-> impl Future<Output = ..> + Send`)
+> - dyn compatibility is solved by having the derive generate an erasure layer
+>   returning `Pin<Box<dyn Future<Output = Response> + Send + '_>>`
 >
-> Middleware chain も同じ制約を受ける。当初の見積もり（Middleware chain ~100行）に消去レイヤのコストが入っていなかったため修正した。詳細は [`rust-type-model.md`](./rust-type-model.md)。
+> The middleware chain is under the same constraint. The original estimate
+> (middleware chain ~100 lines) did not include the erasure layer's cost and has
+> been corrected. Detail in [`rust-type-model.md`](./rust-type-model.md).
 
-### 後回しにするもの
+### Deferred
 
 ```text
 WebSocket
 SSE
 multipart
-TLS（初期はリバースプロキシに委譲）
-compile-time route最適化
+TLS (delegated to a reverse proxy initially)
+compile-time route optimisation
 ```
 
-### 最初から入れるもの（trust boundaryのため省略しない）
+### Included from the start (not omitted, because of the trust boundary)
 
 ```text
 body size limit
 request timeout
-path正規化（`..` / エンコード済みセパレータの扱い）
+path normalisation (`..` and encoded separators)
 ```
 
-HyperがHTTPプロトコルの安全性を担保するが、この3つは自作側の責任である。
+Hyper underwrites the HTTP protocol's safety, but these three are the
+responsibility of what is written here.
 
 ---
 
-## Axumを外して得られる設計上の利益
+## The design benefits of not using Axum
 
-コスト削減ではなく、積極的な利益が存在する。
+There are positive benefits, not just a cost saving.
 
-### 1. 可変長handler magicを捨てられる
+### 1. Variadic handler magic can be dropped
 
-Axumの`Handler`はmacroで16個のtuple implを生成し、任意のextractorを任意個受け取れる。これは人間向けのergonomicsだが、Verumにとっては**害**である。
+Axum's `Handler` generates 16 tuple impls by macro so it can take any number of
+arbitrary extractors. That is human ergonomics, and for Verum it is **harmful.**
 
-「handlerが何を受け取れるか」をCapabilityで縛りたいのに、受け取り口が開きすぎている。固定シグネチャの方が縛れる。
+The point is to constrain what a handler may receive using capabilities, and that
+intake is far too open. A fixed signature constrains better.
 
 ```text
 async fn handle(&self, req: Request, caps: &Caps<Self::Effects>) -> Response
 ```
 
-### 2. Compile-time route table
+### 2. A compile-time route table
 
-Verumはderive macro + inventoryにより、**全Endpointがコンパイル時に既知**になる。したがってradix trieを実行時に構築する必要がなく、`match`式やperfect hashingに落とせる。
+Through a derive macro plus `inventory`, **every endpoint is known at compile
+time** in Verum. So there is no need to build a radix trie at run time; it can
+become a `match` expression or perfect hashing.
 
-これはAxumの構造では原理的に不可能な最適化。
+That optimisation is structurally impossible in Axum's design.
 
-ただし初期は素直なmatcherで十分。後で効かせる余地として記録する。
+A straightforward matcher is enough at first. Recorded as room to exploit later.
 
-### 3. 性能目標が素直に達成される
+### 3. The performance target is met straightforwardly
 
-Hyperを直接叩くため、Axumのレイヤ分のオーバーヘッドが存在しない。「Axum級」は下限になる。
+Hyper is called directly, so Axum's layer of overhead does not exist.
+"Axum-class" becomes the floor.
 
 ---
 
-## 将来的なCustom Runtime
+## A custom runtime, eventually
 
-必要性が明確になった場合のみ検討する。
+Considered only if the need becomes clear.
 
 ```text
-Semantic Framework
+Semantic framework
         ↓
-Custom optimized runtime
+Custom optimised runtime
 ```
 
-現時点では、成熟したRust Web ecosystemを利用し、Semantic Layerの構築に集中する。
+For now, use the mature Rust web ecosystem and concentrate on building the
+semantic layer.

@@ -1,31 +1,40 @@
-# AI Context / Semantic Code Graph
+# AI Context / semantic code graph
 
-AIがコードベースを探索するコストを減らすための構造化情報。Frameworkの第一級成果物。
+Structured information that reduces what it costs an AI to explore the codebase.
+A first-class artefact of the framework.
 
-関連: [`unverified-boundaries.md`](./unverified-boundaries.md) / [`effect-system.md`](./effect-system.md) / [`effect-inference.md`](./effect-inference.md)
-
----
-
-## 中核思想
-
-> AIに大量のソースコードを読ませるのではなく、まず意味論的メタ情報を読ませる。
+Related: [`unverified-boundaries.md`](./unverified-boundaries.md),
+[`effect-system.md`](./effect-system.md),
+[`effect-inference.md`](./effect-inference.md).
 
 ---
 
-## 設計原則: 書く側と読む側を分離する
+## The core idea
 
-ソース上のContractは短く、**AI Contextには展開後の完全な情報を出力する**。
+> Rather than making an AI read a large amount of source, make it read the
+> semantic metadata first.
+
+---
+
+## Design principle: separate the writing side from the reading side
+
+The contract in the source is short, and **the AI Context emits the complete,
+expanded information.**
 
 ```text
-ソース (Contract)      → 差分・省略あり。token効率を優先
-AI Context (JSON)      → 完全形。曖昧さゼロを優先
+source (contract)      → deltas and elisions. Token efficiency first
+AI Context (JSON)      → the complete form. Zero ambiguity first
 ```
 
-> **この分離のコスト**: 「ソース単体では完全な意味が読めない」ことを受け入れる判断である。[`../concepts.md`](../concepts.md) の信頼順位において、AIに読ませたい完全形は**生成物側**にある。したがって生成物の鮮度保証が必須になる（下記）。
+> **The cost of this separation**: it is a decision to accept that the source
+> alone does not carry the complete meaning. In
+> [`../concepts.md`](../concepts.md)'s trust ordering, the complete form intended
+> for an AI sits on the **generated** side. Guaranteeing that output's freshness is
+> therefore mandatory (below).
 
 ---
 
-## 出力例
+## Example output
 
 ```json
 {
@@ -100,23 +109,23 @@ AI Context (JSON)      → 完全形。曖昧さゼロを優先
   "escape_hatches": "unknown",
 
   "unverified_boundaries": [
-    { "kind": "condition_body", "detail": "EmailChanged::holds は型検証不可",
+    { "kind": "condition_body", "detail": "EmailChanged::holds cannot be verified in types",
       "location": "src/conditions/user.rs:12", "permanent": true },
-    { "kind": "row_scope", "detail": "行レベル権限は型検査の対象外。認可は別途必要",
+    { "kind": "row_scope", "detail": "row-level permissions are outside the type check; authorisation is separate",
       "permanent": true },
-    { "kind": "middleware", "detail": "適用される middleware の Effect は未宣言",
+    { "kind": "middleware", "detail": "the effects of the applied middleware are undeclared",
       "permanent": false },
-    { "kind": "event_subscriber", "detail": "UserUpdated の購読側 Effect は未検査",
+    { "kind": "event_subscriber", "detail": "effects on the subscriber side of UserUpdated are unchecked",
       "permanent": false },
-    { "kind": "service_body", "detail": "observed_effects の走査は handle の中だけ。Service 本体で起きる Effect は下界に現れない（path 22）",
+    { "kind": "service_body", "detail": "the observed_effects scan covers only the inside of handle; effects in a service body do not appear in the lower bound (path 22)",
       "permanent": false },
-    { "kind": "domain_repr", "detail": "Domain の Repr は同一クレートのどこからでも到達可能（path 21）",
+    { "kind": "domain_repr", "detail": "a domain's Repr is reachable from anywhere in the same crate (path 21)",
       "location": "src/domain/user.rs", "permanent": false },
-    { "kind": "malformed_set", "detail": "壊れた effect 集合を capability 検査に通せる（path 14f）",
+    { "kind": "malformed_set", "detail": "a malformed effect set can be passed through the capability check (path 14f)",
       "permanent": false },
-    { "kind": "domain_swap", "detail": "*user = other_user は閉じられない（path 2）",
+    { "kind": "domain_swap", "detail": "*user = other_user cannot be closed (path 2)",
       "permanent": true },
-    { "kind": "repository_impl", "detail": "Repository 実装内部の SQL は未検査",
+    { "kind": "repository_impl", "detail": "SQL inside a repository implementation is unchecked",
       "location": "src/repositories/user.rs", "permanent": false }
   ]
 }
@@ -124,67 +133,87 @@ AI Context (JSON)      → 完全形。曖昧さゼロを優先
 
 ---
 
-## 出力に必ず含める6つの情報
+## Six things the output must always carry
 
-通常のドキュメント生成には無い、Verum固有の要件。
+Verum-specific requirements, absent from ordinary documentation generation.
 
-### 1. `enforcement` — 強制レベル
+### 1. `enforcement` — the enforcement level
 
-各Contract項目が**どの程度型で保証されているか**を明記する。
+States **how far each contract item is guaranteed by types.**
 
-| 値 | 意味 |
+| Value | Meaning |
 |---|---|
-| `upper_bound_checked` | 型検査済み。ただし「実装 ⊆ 契約」の**上界**のみ。宣言したのに使わないEffectは検出されない |
-| `intent_only` | 意図の記録。型検査上は冗長（`forbidden` — [`mutation-contract.md`](./mutation-contract.md)） |
-| `metadata_only` | 宣言のみ。型検査なし。実装が従っている保証はない |
+| `upper_bound_checked` | Type-checked, but only the **upper bound** of implementation ⊆ contract. An effect declared but unused is not detected |
+| `intent_only` | A record of intent. Redundant as far as the type check goes (`forbidden` — [`mutation-contract.md`](./mutation-contract.md)) |
+| `metadata_only` | Declaration only. No type check. There is no guarantee the implementation follows it |
+| `none` | An axis with no type check at all (infrastructure effects and the like) |
 
-#### `observed` — 下界（Q-A の決定、2026-08-15）
+> **The value `type_checked` is not used.** It reads as "verified in both
+> directions", whereas Verum's check is an upper bound only.
+> `mutates = [name, email]` does not mean "it changes name and email" but "**it
+> changes nothing but name and email**". That distinction decisively affects an
+> AI's reasoning.
 
-`enforcement` が答えるのは「**これ以外は起きない**」だけである。「**これが起きる**」は別のフィールドで、`handle` のトークン走査で**生成**する。
+Hide the difference in enforcement level and an AI trusts parts of the contract
+without knowing they are no better than a comment.
+
+#### `observed` — the lower bound (the Q-A decision, 2026-08-15)
+
+What `enforcement` answers is only "**nothing else happens**". "**This
+happens**" is a separate field, **generated** by scanning `handle`'s tokens.
 
 ```json
 "observed": { "fields": [...], "scope": "handle_only", "deferred": [] }
 ```
 
-| キー | 意味 |
+| Key | Meaning |
 |---|---|
-| `fields` | `handle` の中で実際に起きる Effect。**生成物であり手書きしない** |
-| `scope` | 走査が届いた範囲。First PoC は `"handle_only"`。**これを出さないと AI は下界が全経路に及ぶと誤読する** |
-| `deferred` | `@service` で逃がした項目。Service 本体は走査対象外なので、ここに出ると同時に `unverified_boundaries` に `service_body` が立つ |
+| `fields` | The effects that actually occur inside `handle`. **Generated, never hand-written** |
+| `scope` | How far the scan reached. `"handle_only"` in the First PoC. **Without it, an AI misreads the lower bound as covering every path** |
+| `deferred` | Items escaped via `@service`. A service body is not scanned, so anything appearing here also raises a `service_body` entry in `unverified_boundaries` |
 
-**読み方**: `enforcement: upper_bound_checked` かつ `observed.fields == effective` かつ `deferred` が空なら、その範囲（`scope`）において**集合は厳密**である。どれか1つでも欠ければ厳密ではない。
+**How to read it**: if `enforcement: upper_bound_checked` and
+`observed.fields == effective` and `deferred` is empty, then within that `scope`
+**the set is exact.** If any one of the three is missing, it is not.
 
-`declared \ observed ≠ ∅`（過剰宣言）は CI が落とすので、**この出力に過剰宣言が残っていることは通常ない**。残っている場合は `deferred` を見ること。**`enforcement` に「両方向検証済み」を意味する値は作らない** — `type_checked` を禁じているのと同じ理由で、層が違うものを1語に畳むと誤読される。詳細は [`effect-inference.md`](./effect-inference.md) §決定（Q-A）。
-| `none` | 型検査が存在しない軸（Infrastructure Effect等） |
+`declared \ observed ≠ ∅` — over-declaration — is failed by CI, so **an
+over-declaration does not normally survive into this output.** If one has, look at
+`deferred`. **No `enforcement` value meaning "verified in both directions" is
+created** — the same reason `type_checked` is banned: folding different layers
+into one word invites misreading. Detail in
+[`effect-inference.md`](./effect-inference.md) §Decision (Q-A).
 
-> **`type_checked` という値は使わない。** 「双方向に検証済み」と読まれるが、Verumの検査は上界のみである。`mutates = [name, email]` は「name と email を変更する」ではなく「**name と email 以外は変更しない**」を意味する。この区別はAIの推論に決定的に影響する。
+### 2. `effective` — the complete effect set after expansion
 
-強制レベルの差を隠すと、Contractの一部が「コメント同然」であることをAIが知らずに信頼してしまう。
+The source carries only the delta `effects = [+CacheWrite]`, while the output
+gives the complete form with the per-method defaults expanded. An AI can then
+decide without knowing the framework's default specification.
 
-### 2. `effective` — 展開後の完全なEffect集合
+### 3. The distinction between `unconditional` and `conditional`
 
-ソース上は `effects = [+CacheWrite]` という差分だけだが、出力ではMethodデフォルトを展開した完全形を出す。AIがフレームワークのデフォルト仕様を知らなくても判断できる。
+Do not mix "always happens" with "happens depending on a condition".
 
-### 3. `unconditional` / `conditional` の区別
+**`condition_verified: false` may not be omitted.** The body of a condition
+cannot be verified in types, so leaving it out makes **the metadata actively
+lie** — it says `conditional`, while `holds` may just return `true`.
 
-「常に起きること」と「条件次第で起きること」を混ぜない。
+### 4. `unverified_boundaries` — where the type check does not reach
 
-**`condition_verified: false` は省略不可。** 条件の中身は型で検証できないため、これを出さないと**メタデータが能動的に嘘をつく**（`conditional` と書いてあるのに `holds` が `true` を返すだけかもしれない）。
+The full ledger of routes is in
+[`unverified-boundaries.md`](./unverified-boundaries.md). `permanent: true` marks
+what cannot be closed in principle.
 
-### 4. `unverified_boundaries` — 型検査が届かない箇所
-
-全経路の台帳は [`unverified-boundaries.md`](./unverified-boundaries.md) にある。`permanent: true` は原理的に埋まらないもの。
-
-**この出力機構はFirst PoCから実装する。** 後から追加すると、それまでのAI Contextが「嘘をついていた」ことになる。
+**This output mechanism is implemented from the First PoC.** Added later, it would
+mean every AI Context up to that point had been lying.
 
 ### 5. `scope_of_readonly_guarantee`
 
-| 値 | 意味 |
+| Value | Meaning |
 |---|---|
-| `handler_only` | ハンドラ内では read-only。Middleware が Mutation する可能性がある |
-| `request` | リクエスト全体で read-only（Middleware Contract 導入後） |
+| `handler_only` | Read-only inside the handler. Middleware may still mutate |
+| `request` | Read-only for the whole request (after middleware contracts arrive) |
 
-「GETは read-only」を無条件に主張してはならない。
+"A GET is read-only" must not be claimed unconditionally.
 
 ### 6. `escape_hatches`
 
@@ -192,67 +221,82 @@ AI Context (JSON)      → 完全形。曖昧さゼロを優先
 "escape_hatches": "unknown"
 ```
 
-Escape Hatch の記録は現状**自己申告**（属性を書き忘れれば記録されない）である。したがって空配列 `[]` を出力してはならない。`[]` は「脱出なし」と読まれるが、実際には「未申告の脱出があるかもしれない」である。
+Recording an escape hatch is **self-reported** today — forget the attribute and
+nothing is recorded. So an empty array `[]` must not be emitted. `[]` reads as
+"no escapes", whereas the truth is "there may be an unreported escape".
 
-低レイヤAPIが属性マクロ生成のZST証拠を引数で要求する形になれば、記録漏れが構造的に防げるため `[]` を出せるようになる。
+Once the low-level API requires a ZST proof produced by an attribute macro as an
+argument, a missing record becomes structurally impossible and `[]` can be
+emitted.
 
 ---
 
-## 生成物の鮮度保証
+## Guaranteeing the generated output's freshness
 
-ソースとJSONの両方が存在する状態で、**AIがどちらを信じるべきか判断できなければ、この設計は「コメントを信頼しない」原則を JSON で再現するだけになる**。
+With both the source and the JSON present, **if an AI cannot tell which to
+believe, this design merely reproduces "do not trust comments" in JSON.**
 
-| 手段 | 内容 |
+| Means | Contents |
 |---|---|
-| git管理外にする | ビルドの一部として生成し、コミットしない。古いファイルが存在しない状態を作る |
-| CIで差分ゼロ検査 | 再生成して差分が出たら失敗させる |
-| タイムスタンプを含める | 生成時刻とソースのハッシュを JSON に埋める |
+| Keep it out of git | Generate it as part of the build and do not commit it, so a stale file never exists |
+| A zero-diff check in CI | Regenerate and fail if a diff appears |
+| Include a timestamp | Embed the generation time and a hash of the source in the JSON |
 
 ---
 
-## AIがいつ読むか — 運用の定義が必要
+## When an AI reads it — the operating procedure has to be defined
 
-**スキーマを設計しても、AIがそれを読まなければ意味がない。** コーディングエージェントは明示的に指示されない限りソースを直接読む。
+**Designing a schema is pointless if an AI never reads it.** A coding agent reads
+the source directly unless told otherwise.
 
-したがって以下が必要（現状未定義）。
+So the following is needed, and is currently undefined:
 
-- `CLAUDE.md` 相当に「Endpointを触る前に `cargo verum contract` を読む」手順を明記する
-- 出力コマンドを1つに固定する
-- AI向けの最小リファレンス（フレームワークの作法を100行程度に圧縮したもの）を別途用意する
+- State the step "read `cargo verum contract` before touching an endpoint" in the
+  equivalent of a `CLAUDE.md`
+- Fix on a single output command
+- Provide a separate minimal reference for AI use — the framework's conventions
+  compressed into roughly 100 lines
 
-**この運用が定義されなければ、AI Context は「作ったが読まれない成果物」になる。** [`research-questions.md`](./research-questions.md) に記録。
+**Without that procedure, the AI Context becomes an artefact that is built and
+never read.** Recorded in [`research-questions.md`](./research-questions.md).
 
 ---
 
-## 出力形式
+## Output formats
 
-| 形式 | 用途 | 優先度 |
+| Format | Use | Priority |
 |---|---|---|
-| JSON | AI Context / CI検証 | First PoC |
-| Markdown | 人間向けドキュメント | Full PoC |
-| OpenAPI | 既存ツールチェーン連携 | Full PoC |
-| MCP | AI Agentへの動的提供 | Full PoC以降 |
+| JSON | AI Context / CI verification | First PoC |
+| Markdown | Human-facing documentation | Full PoC |
+| OpenAPI | Interoperating with existing toolchains | Full PoC |
+| MCP | Serving AI agents dynamically | After the Full PoC |
 
 ---
 
-## 実装方針
+## Implementation approach
 
-derive macro + inventory（またはlinkme）により、各Endpointのcontractをコンパイル時に収集する。
+A derive macro plus `inventory` (or `linkme`) collects each endpoint's contract
+at compile time.
 
 ```text
-#[derive(Endpoint)] → contract を inventory に登録
+#[derive(Endpoint)] → registers the contract in inventory
         ↓
 cargo verum contract --format json
 ```
 
-この仕組みは compile-time route table の生成にも再利用できる（[`runtime-stack.md`](./runtime-stack.md)）。
+The same mechanism is reusable for generating the compile-time route table
+([`runtime-stack.md`](./runtime-stack.md)).
 
 ---
 
-## 未解決の課題
+## Open problems
 
-- **Contextのサイズ管理** — 1 endpoint で約 400〜600 token。200 endpoint なら約 100k token になり、「数千行の代わりに数十〜数百token」という主張と衝突する。分割・要約・必要な Endpoint だけを引く仕組みが必要
-- Endpoint間の関係（Eventの発行者と購読者）をGraphとして表現するか
-- Schema のバージョニング
+- **Managing the context's size** — roughly 400–600 tokens per endpoint. At 200
+  endpoints that is around 100k tokens, which collides with the claim of "tens to
+  hundreds of tokens instead of thousands of lines". Splitting, summarising, or
+  fetching only the endpoints needed is required
+- Whether relationships between endpoints (an event's emitter and its subscribers)
+  are expressed as a graph
+- Versioning the schema
 
-[`research-questions.md`](./research-questions.md) を参照。
+See [`research-questions.md`](./research-questions.md).

@@ -1,82 +1,93 @@
-# Verum — Specs
+# Verum — specs
 
-技術仕様。思想・ビジョンは [`../concepts.md`](../concepts.md)、開発計画は [`../roadmap/roadmap.md`](../roadmap/roadmap.md) を参照。
+The technical specifications: **what the design is.**
 
----
+The reasoning behind each decision lives in [`../adr/`](../adr/README.md); the
+vision is in [`../concepts.md`](../concepts.md); the implementation rules are in
+[`../rules/`](../rules/README.md).
 
-## 実装前に必ず読むもの
-
-| ファイル | 内容 |
-|---|---|
-| [`unverified-boundaries.md`](./unverified-boundaries.md) | **型検査が届かない全経路の台帳。** 埋め残しをゼロにするためのファイル |
-| [`rust-type-model.md`](./rust-type-model.md) | 実コンパイルで確認した制約。cons list / indexパラメータ / 拡張trait / MSRV |
-| [`diagnostics.md`](./diagnostics.md) | エラーメッセージは仕様である。3層防御と到達できないこと |
-| [`research-questions.md`](./research-questions.md) | 何が未決定か。最優先3件を含む |
+**These documents state outcomes and link to the ADR.** They do not repeat the
+rationale — that separation is what stops a claim being corrected in one place
+and left standing in five others.
 
 ---
 
-## Core Model
+## Read before implementing
 
-| ファイル | 内容 |
+| File | Contents |
 |---|---|
-| [`semantic-endpoint.md`](./semantic-endpoint.md) | Contract宣言構文（属性→型展開）とEndpointの構成要素 |
-| [`handler-rules.md`](./handler-rules.md) | 実装の自明性を担保する4ルール。Capability設計の前提条件 |
-| [`effect-system.md`](./effect-system.md) | Effect分類、カテゴリ分割、宣言粒度、GETのRead-only保証 |
-| [`mutation-contract.md`](./mutation-contract.md) | Field-levelの可変性。**Domainの不透明化** |
-| [`read-contract.md`](./read-contract.md) | `reads` をProjection型で強制する |
-| [`conditional-effects.md`](./conditional-effects.md) | `when` スコープによるCapability発行と、原理的な限界 |
-| [`capability-system.md`](./capability-system.md) | 中核機構。`Ctx<'req, E>` / sealed trait / 認可との区別 |
-| [`architecture-contract.md`](./architecture-contract.md) | Handler → Service → Repository の経路を型で制約する |
+| [`unverified-boundaries.md`](./unverified-boundaries.md) | **The ledger of every path the type system does not reach.** The file that exists so nothing is left unrecorded |
+| [`rust-type-model.md`](./rust-type-model.md) | Constraints confirmed by compiling: cons lists, index parameters, extension traits, MSRV |
+| [`diagnostics.md`](./diagnostics.md) | Error messages are a specification. The three defence layers, and what cannot be reached |
+| [`research-questions.md`](./research-questions.md) | What is still undecided, including the highest-priority items |
+
+---
+
+## Core model
+
+| File | Contents |
+|---|---|
+| [`semantic-endpoint.md`](./semantic-endpoint.md) | The contract declaration syntax (attribute → type expansion) and what an endpoint is made of |
+| [`handler-rules.md`](./handler-rules.md) | The four rules that keep implementations self-evident. A precondition for the capability design |
+| [`effect-system.md`](./effect-system.md) | Effect classification, category splits, declaration granularity, the read-only guarantee on GET |
+| [`mutation-contract.md`](./mutation-contract.md) | Field-level mutability. **Domain opacity** |
+| [`read-contract.md`](./read-contract.md) | Enforcing `reads` through a projection type |
+| [`conditional-effects.md`](./conditional-effects.md) | Issuing capabilities through a `when` scope, and the limits that cannot be removed |
+| [`capability-system.md`](./capability-system.md) | The core mechanism: `Ctx<'req, E>`, sealed traits, and how this differs from authorisation |
+| [`architecture-contract.md`](./architecture-contract.md) | Constraining the handler → service → repository path with types |
 
 ## Verification
 
-| ファイル | 内容 |
+| File | Contents |
 |---|---|
-| [`effect-inference.md`](./effect-inference.md) | 上界検査の限界と、「実装から生成する」代替案 |
-| [`diagnostics.md`](./diagnostics.md) | エラーメッセージ設計 |
-| [`rust-type-model.md`](./rust-type-model.md) | Rustのどの型機能を使うか |
+| [`effect-inference.md`](./effect-inference.md) | The limits of an upper-bound check, and the "generate it from the implementation" alternative |
+| [`diagnostics.md`](./diagnostics.md) | Error message design |
+| [`rust-type-model.md`](./rust-type-model.md) | Which of Rust's type features are used |
 
 ## Runtime
 
-| ファイル | 内容 |
+| File | Contents |
 |---|---|
-| [`runtime-stack.md`](./runtime-stack.md) | 依存する層と自作する層。Dependency Hiding Rule。MSRV |
-| [`middleware.md`](./middleware.md) | Middlewareの型付け。tower / tower-httpとの境界 |
-| [`persistence.md`](./persistence.md) | Repository traitのスコープと信頼境界。Domain不透明化との相互運用 |
-| [`performance.md`](./performance.md) | 性能目標とCompile-time消費の方針 |
+| [`runtime-stack.md`](./runtime-stack.md) | Which layers are depended on and which are written here. The Dependency Hiding Rule. MSRV |
+| [`middleware.md`](./middleware.md) | Typing middleware, and the boundary with tower / tower-http |
+| [`persistence.md`](./persistence.md) | The repository trait's scope and its trust boundary. Interoperating with domain opacity |
+| [`performance.md`](./performance.md) | Performance targets, and the policy of spending metadata at compile time |
 
-## Output & Evaluation
+## Output and evaluation
 
-| ファイル | 内容 |
+| File | Contents |
 |---|---|
-| [`ai-context.md`](./ai-context.md) | Semantic Code Graph。強制レベルと未検査境界の明示 |
-| [`evaluation.md`](./evaluation.md) | AI Coding Benchmarkの測定指標 |
+| [`ai-context.md`](./ai-context.md) | The semantic code graph. Stating enforcement levels and unverified boundaries |
+| [`evaluation.md`](./evaluation.md) | The metrics for the AI coding benchmark |
 
-## Open Problems
+## Open problems
 
-| ファイル | 内容 |
+| File | Contents |
 |---|---|
-| [`unverified-boundaries.md`](./unverified-boundaries.md) | 未検査経路の台帳 |
-| [`research-questions.md`](./research-questions.md) | 未解決の設計課題 |
+| [`unverified-boundaries.md`](./unverified-boundaries.md) | The ledger of unchecked paths |
+| [`research-questions.md`](./research-questions.md) | Unresolved design questions |
+| [`../adr/README.md`](../adr/README.md) | Decisions still marked `proposed` — the ones the codebase already relies on |
 
 ---
 
-## 読む順序
+## Reading order
 
-初めて読む場合:
+Coming to this for the first time:
 
 ```text
-../concepts.md            — 何を作ろうとしているか
+../concepts.md            — what is being built
         ↓
-semantic-endpoint.md      — Contract をどう宣言するか
+semantic-endpoint.md      — how a contract is declared
         ↓
-handler-rules.md          — 実装がどう書かれるか
+handler-rules.md          — how an implementation is written
         ↓
-capability-system.md      — それをどう型で強制するか
+capability-system.md      — how types enforce it
         ↓
-unverified-boundaries.md  — どこが強制されないか
+unverified-boundaries.md  — where they do not
         ↓
-../roadmap/roadmap.md     — 何から作るか
+../adr/README.md          — why each choice was made, and what is still open
 ```
 
-**`unverified-boundaries.md` を飛ばさないこと。** Contractの網羅性が高いほど「これで全部だ」という誤った安心を与えるため、保証されない範囲を知らずに使うことが最大のリスクになる。
+**Do not skip `unverified-boundaries.md`.** The more complete a contract looks,
+the stronger the false assurance that it covers everything — so using Verum
+without knowing what is *not* guaranteed is the largest risk it carries.

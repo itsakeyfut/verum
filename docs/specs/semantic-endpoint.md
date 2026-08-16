@@ -1,25 +1,32 @@
-# Semantic Endpoint
+# Semantic endpoint
 
-EndpointをHTTP関数ではなくSemantic Contractとして表現する。Contract宣言構文の仕様。
+Expressing an endpoint as a semantic contract rather than an HTTP function. The
+specification of the contract declaration syntax.
 
-関連: [`handler-rules.md`](./handler-rules.md) / [`effect-system.md`](./effect-system.md) / [`capability-system.md`](./capability-system.md) / [`diagnostics.md`](./diagnostics.md)
+Related: [`handler-rules.md`](./handler-rules.md),
+[`effect-system.md`](./effect-system.md),
+[`capability-system.md`](./capability-system.md),
+[`diagnostics.md`](./diagnostics.md).
 
 ---
 
-## 解決したい問題
+## The problem
 
-通常のWebフレームワークでは、以下のシグネチャだけではEndpoint内部を読まないと何も分からない。
+In an ordinary web framework, a signature like this tells you nothing without
+reading the endpoint's body.
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[put("/users/{user_id}")]
 async fn update_user(...) -> Result<User>
 ```
 
-分からないこと: 何を変更するのか / 何を読むのか / DBを書き換えるのか / 外部サービスを呼ぶのか / Eventを発行するのか / どの条件で何が変わるのか。
+What is unknown: what it changes, what it reads, whether it writes to the
+database, whether it calls an external service, whether it emits an event, and
+under which conditions any of that differs.
 
 ---
 
-## 決定: 属性で宣言し、deriveが型に展開する
+## Decision: declare it in an attribute, and let the derive expand it into types
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[endpoint(PUT "/users/{id}")]
@@ -29,13 +36,13 @@ async fn update_user(...) -> Result<User>
     response  = UserView,
 
     reads     = [User::id, User::status],
-    mutates   = [User::name],              // 無条件に変更する
+    mutates   = [User::name],              // changed unconditionally
     forbidden = [User::password_hash],
     creates   = [AuditLog],
     emits     = [UserUpdated],
 
     when(EmailChanged) => {
-        mutates = [User::email],           // この条件下でのみ変更する
+        mutates = [User::email],           // changed only under this condition
         emits   = [EmailVerificationRequested],
         calls   = [EmailService],
     },
@@ -43,21 +50,22 @@ async fn update_user(...) -> Result<User>
 pub struct UpdateUser;
 ```
 
-deriveが展開する型:
+The types the derive expands to:
 
 ```rust,compile_fail
 impl Endpoint for UpdateUser {
-    type Method = Put;                    // 型レベルマーカ（const ではない）
+    type Method = Put;                    // a type-level marker, not a const
     const PATH: &'static str = "/users/{id}";
 
     type Domain    = User;
     type Request   = UpdateUserRequest;
     type Response  = UserView;
 
-    // cons list 表現（フラットタプルでは所属判定が実装できない）
-    // `mutates` の Field は変更前の値を読む必要があるため自動的に `reads` に入る
-    // （[`read-contract.md`](./read-contract.md)）。宣言は id / status の2つだが、
-    // 展開後は `mutates = [User::name]` の name が加わって3要素になる。
+    // cons-list representation (membership cannot be implemented with flat tuples)
+    // A field in `mutates` needs its previous value read, so it is automatically
+    // included in `reads` ([`read-contract.md`](./read-contract.md)). The declaration
+    // names two — id and status — but after expansion `name` from
+    // `mutates = [User::name]` joins them, making three.
     type Reads   = (Read<User, user::Id>,
                    (Read<User, user::Status>,
                    (Read<User, user::Name>, ())));
@@ -77,13 +85,17 @@ impl Endpoint for UpdateUser {
 }
 ```
 
-> **宣言場所の規則**: トップレベルの `mutates` / `emits` / `calls` は無条件に起こり得るもの、`when(C)` 内はその条件下でのみ起こり得るもの。同一要素を両方に書くことは禁止（macroが弾く）。詳細は [`conditional-effects.md`](./conditional-effects.md)。
+> **The rule for where things are declared**: a top-level `mutates` / `emits` /
+> `calls` is what may happen unconditionally; one inside `when(C)` is what may
+> happen only under that condition. Writing the same element in both is forbidden
+> (the macro rejects it). Detail in
+> [`conditional-effects.md`](./conditional-effects.md).
 
-### サポートするHTTP Method
+### Supported HTTP methods
 
-型レベルマーカとして以下を提供する。
+The following are provided as type-level markers.
 
-| Method | マーカ型 | read-only |
+| Method | Marker type | read-only |
 |---|---|---|
 | GET | `Get` | ✅ |
 | HEAD | `Head` | ✅ |
@@ -92,63 +104,83 @@ impl Endpoint for UpdateUser {
 | PATCH | `Patch` | |
 | DELETE | `Delete` | |
 
-`OPTIONS` はEndpointとして宣言しない（CORSは tower-http のレイヤが処理する — [`middleware.md`](./middleware.md)）。
+`OPTIONS` is not declared as an endpoint (CORS is handled by a tower-http layer —
+[`middleware.md`](./middleware.md)).
 
-read-only なMethodでは `mutates` / `creates` / `deletes` を宣言できない（`when` 内も含めてmacroが弾く）。
+A read-only method cannot declare `mutates` / `creates` / `deletes` — the macro
+rejects it, including inside `when`.
 
-> `Method` を型にする理由、cons listである理由、`Conditional` をカテゴリ別に分割する理由はすべて [`rust-type-model.md`](./rust-type-model.md) に記載（実コンパイルで確認済みの制約）。
+> Why `Method` is a type, why cons lists are used, and why `Conditional` is split
+> by category are all in [`rust-type-model.md`](./rust-type-model.md) (constraints
+> confirmed by compiling).
 
-### Endpointは unit struct のみ
+### An endpoint is a unit struct only
 
 ```rust
 pub struct UpdateUser;                   // ✅
 ```
 
 ```rust,compile_fail
-pub struct UpdateUser { pool: PgPool }   // ❌ derive がエラー
+pub struct UpdateUser { pool: PgPool }   // ❌ the derive errors
 ```
 
-フィールドを持てると `self.pool` から直接SQLを実行して `ctx` を迂回できる。[`handler-rules.md`](./handler-rules.md) Rule 2 を型で成立させるための条件。
+With fields, `self.pool` could run SQL directly and bypass `ctx`. This is the
+condition that makes [`handler-rules.md`](./handler-rules.md) Rule 2 hold in
+types.
 
-### この方式を選んだ理由
+### Why this approach
 
-| 観点 | 属性→型展開 | 純粋associated type | 宣言マクロDSL | 外部ファイル |
+| Aspect | attribute → types | pure associated types | declarative macro DSL | external file |
 |---|---|---|---|---|
-| 型検査の強さ | 強 | 強 | 強 | 弱（生成境界あり） |
-| **macro段階のエラー精度** | **Field名のtypoに `did you mean` を出せる** | 出せない | spanがずれやすい | 型と乖離 |
-| IDE補完 | 効く（`User::name` は実在パス） | 効く | **効かない** | 効かない |
-| 記述量 | 少 | 多 | 最少 | 中 |
+| Strength of type checking | strong | strong | strong | weak (a generation boundary) |
+| **Error precision at the macro stage** | **can emit `did you mean` for a field-name typo** | cannot | spans drift easily | diverges from the types |
+| IDE completion | works (`User::name` is a real path) | works | **does not work** | does not work |
+| Verbosity | low | high | lowest | medium |
 
-**決め手は macro 段階で弾けるエラーの精度**である。derive macroは属性内トークンのspanを保持するため、存在しないField / Domainを型検査前に精密なエラーで弾ける。
+**The deciding factor is the precision of the errors that can be rejected at the
+macro stage.** A derive macro preserves the spans of the tokens inside the
+attribute, so a nonexistent field or domain is rejected with a precise error
+before type checking.
 
-> **訂正**: 当初「trait bound違反時にContract宣言箇所への `note` を出せる」ことを決め手としていたが、これは**成立しない**。`on_unimplemented` のnoteはプレーンテキストでspanを持たず、rustcが出すspanは `Has` のimpl定義位置である。span付きnoteが出るのは associated type equality bound の場合のみ（`Mutates = ()` 違反など）。詳細は [`diagnostics.md`](./diagnostics.md)。
+> **Correction**: the deciding factor was originally given as "a `note` pointing
+> at the contract declaration can be emitted when a trait bound is violated". That
+> **does not hold.** An `on_unimplemented` note is plain text with no span, and the
+> span rustc emits is the location of `Has`'s impl definition. A note with a span
+> appears only for an associated-type equality bound (a `Mutates = ()` violation,
+> for instance). Detail in [`diagnostics.md`](./diagnostics.md).
 
-### 外部ファイル方式（Goa方式）との関係
+### Relationship to the external-file approach (the Goa approach)
 
-**「型が権威 vs 外部ファイルが権威」という対立軸は成立しない。** `#[contract(...)]` の中身もRustの型式ではなくproc macroが解釈するトークン列であり、型はその生成物である。構造はGoaと同型。
+**The framing "types are authoritative vs. an external file is authoritative"
+does not hold.** The contents of `#[contract(...)]` are not Rust type syntax
+either but a token stream a proc macro interprets, and the types are its output.
+Structurally it is the same as Goa.
 
-実際に成立している差別化は以下の2点。
+Two differentiators do hold:
 
-1. **契約の対象範囲** — HTTP契約だけでなく内部状態変更 / Effect / Capability / Architecture まで対象にする
-2. **エラーの局所性** — 違反が宣言箇所を指すコンパイルエラーとして返る
+1. **What the contract covers** — not only the HTTP contract but internal state
+   changes, effects, capabilities and architecture.
+2. **The locality of errors** — a violation comes back as a compile error pointing
+   at the declaration.
 
-[`../concepts.md`](../concepts.md) の差別化記述もこの2点に整理する。
+[`../concepts.md`](../concepts.md)'s differentiation is stated in these two terms.
 
-### Field指定の形式
+### The form of a field reference
 
-属性内は `User::name`（フィールド名）で書き、deriveが実在チェック後に `user::Name` マーカ型へ変換する。
+Inside the attribute it is written `User::name` (the field name), and the derive
+converts it to the `user::Name` marker type after checking that it exists.
 
-- AIが自然に書ける形を保つ
-- 存在しないフィールドはmacroが `did you mean` 付きで弾ける
-- `User::name` は実在するパスなのでIDE補完・ジャンプが効く
+- It keeps the form an AI writes naturally.
+- A nonexistent field is rejected by the macro, with `did you mean`.
+- `User::name` is a real path, so IDE completion and go-to-definition work.
 
 ---
 
-## Semantic Endpointの構成要素
+## What a semantic endpoint is made of
 
 ```text
 Endpoint
-├── Method（型レベルマーカ）
+├── Method (a type-level marker)
 ├── Path
 ├── Domain
 ├── Request / Response
@@ -160,27 +192,39 @@ Endpoint
 └── Capabilities   → capability-system.md
 ```
 
-### `operation` は削除した
+### `operation` was removed
 
-初期案には `operation = Update` があったが**削除した**。
+The initial design had `operation = Update`. It has been **removed.**
 
-理由:
+Why:
 
-- **値集合が定義できなかった** — Q-C実験の被験者は新Endpointを追加する際「存在しないenum variantを捏造するリスクを避け、既存の `Update` を再利用した」と報告した。AIが毎回迷い、かつ何も保証しないフィールドだった
-- **情報が重複していた** — 操作の種類は `Method` + `Domain` + `mutates`/`creates`/`deletes` から導出できる
-- **Effect名と衝突していた** — `operation = Read` と `Read<User, user::Id>`、`operation = Create` と `Create<AuditLog>`
+- **Its value set could not be defined** — the subject of the Q-C experiment
+  reported that when adding a new endpoint it "reused the existing `Update` to
+  avoid the risk of inventing an enum variant that does not exist". It was a field
+  the AI hesitated over every time and which guaranteed nothing.
+- **It duplicated information** — the kind of operation is derivable from `Method`
+  plus `Domain` plus `mutates` / `creates` / `deletes`.
+- **It collided with effect names** — `operation = Read` against
+  `Read<User, user::Id>`, `operation = Create` against `Create<AuditLog>`.
 
-**業務的な操作名はEndpointの型名が担う。** `SuspendUser` という型名が「User に対する Suspend 操作」を表しており、`domain = User, operation = Suspend` と書くのは冗長だった。
+**The endpoint's type name carries the business operation name.** The type name
+`SuspendUser` already says "a Suspend operation on User"; writing
+`domain = User, operation = Suspend` was redundant.
 
-型名はAI Contextの `"endpoint": "SuspendUser"` として出力されるため、情報は失われない。
+The type name is emitted in the AI Context as `"endpoint": "SuspendUser"`, so no
+information is lost.
 
-> 命名規約: Endpoint の型名は `<Operation><Domain>` 形式を推奨する（`GetUser` / `UpdateUser` / `SuspendUser` / `DeleteUser`）。ただし強制はしない。
+> Naming convention: an endpoint's type name is recommended to follow
+> `<Operation><Domain>` (`GetUser` / `UpdateUser` / `SuspendUser` / `DeleteUser`).
+> It is not enforced.
 
 ---
 
-## Handlerシグネチャ
+## The handler signature
 
-固定シグネチャを採用する。可変長handler（任意のextractorを任意個受け取る形）は、Capabilityを型で縛る目的に適さない。
+A fixed signature is used. A variadic handler — one taking any number of
+arbitrary extractors — does not suit the goal of constraining capabilities in
+types.
 
 ```rust,ignore   // fragment, not a complete item
 impl Handler for UpdateUser {
@@ -189,20 +233,25 @@ impl Handler for UpdateUser {
 }
 ```
 
-**AFIT（`async fn` in trait）ではなくRPITIT + `Send` を使う。** AFITだとFutureが `Send` にならずhyperのmulti-thread runtimeに載らない（実コンパイルで確認済み）。dyn互換性は別途、deriveがobject-safeな消去レイヤを生成して解決する。
+**RPITIT + `Send` is used, not AFIT (`async fn` in trait).** With AFIT the future
+is not `Send` and does not load onto hyper's multi-thread runtime (confirmed by
+compiling). dyn compatibility is solved separately, by the derive generating an
+object-safe erasure layer.
 
-`Ctx<'req, Self>` はリクエスト寿命に縛られ（`'static` でない）、Capabilityを保持する。実装規約は [`handler-rules.md`](./handler-rules.md) を参照。
+`Ctx<'req, Self>` is bound to the request's lifetime (it is not `'static`) and
+carries the capabilities. The implementation conventions are in
+[`handler-rules.md`](./handler-rules.md).
 
 ---
 
-## 完全な例
+## A complete example
 
-### Domain定義
+### The domain definition
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[derive(Domain)]
 pub struct User {
-    id:            UserId,      // private 必須（pub は derive がエラー）
+    id:            UserId,      // private is required (pub is a derive error)
     name:          String,
     email:         Email,
     password:      PasswordHash,
@@ -212,11 +261,18 @@ pub struct User {
 }
 ```
 
-マクロが生成: Field マーカ型 / Capability要求付きアクセサ / `pub(crate)` な `Repr` / 宣言Fieldのみを出す `Debug` と `Serialize`。
+The macro generates: field marker types, capability-checked accessors, a
+`pub(crate)` `Repr`, and `Debug` and `Serialize` implementations that emit only
+the declared fields.
 
-> **⚠️ 2点、T-M1-01 / #13 で覆っている。** `Repr` は「**Repository 実装専用**」にはならない（`pub(crate)` はアプリクレート全体を指す — 台帳 path 21）。そして `#[derive(...)]` か属性マクロかは**未確定**（derive は入力と同名のアイテムを追加できないため）。[`persistence.md`](./persistence.md) §判定 を見ること。
+> **⚠️ Two points here were overturned by T-M1-01 / #13.** `Repr` does **not**
+> become "for the repository implementation only" (`pub(crate)` means the whole
+> application crate — ledger path 21). And whether it is `#[derive(...)]` or an
+> attribute macro is **undecided** (a derive cannot add an item with the same name
+> as its input). See [`persistence.md`](./persistence.md) §Verdict.
 
-**フィールドを `pub` にすると `user.email = v` で Contract 全体が無効化される。** 理由は [`mutation-contract.md`](./mutation-contract.md) を参照。
+**Making a field `pub` voids the whole contract via `user.email = v`.** The
+reasoning is in [`mutation-contract.md`](./mutation-contract.md).
 
 ### GET
 
@@ -242,22 +298,34 @@ impl Handler for GetUser {
 }
 ```
 
-`mutates` / `creates` / `deletes` を宣言していないため、これらは `()` になる。GETに対しては `Mutates = ()` が構造的に要求される。
+Because `mutates` / `creates` / `deletes` are not declared, they become `()`. For
+a GET, `Mutates = ()` is structurally required.
 
 ### PUT
 
-完全な実装例（`when` / `after_commit` を含む）は [`handler-rules.md`](./handler-rules.md) を参照。**`when` の呼び出しは async closure（edition 2024 / MSRV 1.85+）が必須**で、`user` / `req` をキャプチャさせずクロージャ引数として貸す形になる。
+The complete implementation example, including `when` and `after_commit`, is in
+[`handler-rules.md`](./handler-rules.md). **Calling `when` requires an async
+closure (edition 2024 / MSRV 1.85+)**, and takes the shape of lending `user` and
+`req` as closure arguments rather than letting them be captured.
 
 ---
 
-## 未決定の論点
+## Undecided points
 
-- **Error** — どのエラーが返り得るかをContractに含めるか（`fails = [NotFound, Conflict]`）。OpenAPI生成には必須
-- **Validation** — Requestの制約をContractで宣言するか（現在は完全に射程外）
-- **Transaction** — Endpointとトランザクション境界の関係
-- **Multi-domain** — 1つのEndpointが複数Domainを触る場合の宣言形式
-- **一覧 / 集計 / JOIN** — `Read<Domain, Field>` が単一インスタンス前提であることの帰結。実Webアプリで最も画面数が多い形が書けない
-- **Job / Background** — HTTPリクエストが存在しない処理にEndpointの枠組みが適用できない
-- **State Transition** — `status: active → suspended` をContractで表現するか
+- **Errors** — whether the contract carries which errors can be returned
+  (`fails = [NotFound, Conflict]`). Required for OpenAPI generation.
+- **Validation** — whether request constraints are declared in the contract
+  (entirely out of scope today).
+- **Transactions** — the relationship between an endpoint and a transaction
+  boundary.
+- **Multi-domain** — the declaration form when one endpoint touches several
+  domains.
+- **Listing, aggregation, JOIN** — consequences of `Read<Domain, Field>` assuming
+  a single instance. The shape that accounts for the most screens in a real web
+  application cannot be written.
+- **Jobs and background work** — the endpoint framing does not apply to processing
+  with no HTTP request.
+- **State transitions** — whether `status: active → suspended` is expressed in the
+  contract.
 
-[`research-questions.md`](./research-questions.md) に記録。
+Recorded in [`research-questions.md`](./research-questions.md).

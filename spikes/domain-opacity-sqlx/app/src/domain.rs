@@ -1,7 +1,7 @@
 //! What `#[derive(Domain)]` would generate, written out by hand.
 //!
-//! Shape taken from `docs/specs/persistence.md` §Domain不透明化との相互運用 and
-//! `docs/specs/mutation-contract.md` §Domainは不透明型として公開する.
+//! Shape taken from `docs/specs/persistence.md` §Interoperating with domain opacity and
+//! `docs/specs/mutation-contract.md` §Decision: a domain is exposed as an opaque type.
 
 /// The opaque Domain.
 ///

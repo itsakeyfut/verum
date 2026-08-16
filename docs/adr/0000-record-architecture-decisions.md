@@ -9,7 +9,7 @@ decision-makers: itsakeyfut
 ## Context and Problem Statement
 
 This project already has decision logs. Seven files under `docs/specs/**` carry a
-「却下した案」(rejected alternatives) section, and `docs/dev/*/review-knowledge.md`
+"rejected alternatives" section, and `docs/dev/*/review-knowledge.md`
 records footguns. What is missing is not a log — it is the guarantee that a
 decision exists in exactly one place.
 
@@ -113,7 +113,7 @@ Two mechanical checks back this ADR itself:
   are observed duplicating spec content twice, redraw the boundary.
 * `docs/specs/research-questions.md` overlaps with `proposed` ADRs. It keeps only
   the questions that have **not** yet become ADRs; once one does, it moves.
-* The 「却下した案」 sections in the specs move here **as they are touched**, not
+* The "rejected alternatives" sections in the specs move here **as they are touched**, not
   in one sweep.
 
 ## When to write one
@@ -123,7 +123,7 @@ Two mechanical checks back this ADR itself:
 * Two or more implementations are possible and one is chosen.
 * An existing decision is reversed — write a new ADR, mark the old one
   `superseded by ADR-NNNN`, and say what measurement reversed it.
-* You are about to write 未決 or 未検証 into a spec.
+* You are about to write "undecided" or "unverified" into a spec.
 
 **Not worth an ADR:** naming, formatting, anything affecting one call site.
 

@@ -1,247 +1,369 @@
-# Unverified Boundaries
+# Unverified boundaries
 
-型検査が届かない経路の台帳。**埋め残しをゼロにするためのファイル。**
+The ledger of every route the type check does not reach. **The file that exists
+so nothing is left unrecorded.**
 
-関連: [`capability-system.md`](./capability-system.md) / [`ai-context.md`](./ai-context.md) / [`persistence.md`](./persistence.md)
+Related: [`capability-system.md`](./capability-system.md),
+[`ai-context.md`](./ai-context.md),
+[`persistence.md`](./persistence.md).
 
 ---
 
-## なぜこのファイルが必要か
+## Why this file exists
 
-Verumの核心的リスクは「型が弱いこと」ではない。
+Verum's central risk is not that the types are weak.
 
-> **型で塞いだ経路の隣に、より楽な未検査経路が並んでいること。**
+> **It is that next to a route closed by types sits an easier, unchecked one.**
 
-型の壁が高いほど、AIは壁を越えずに**回り込む**。コンパイルエラーに詰まったAIは「Contractを緩める」「Service層でやる」「イベントで別の場所に投げる」「生SQLで書く」という第3の選択肢を常に持っている。
+The higher the type wall, the more an AI **walks around** it rather than over it.
+An AI stuck on a compile error always has a third option: relax the contract, do
+it in the service layer, throw it somewhere else through an event, write raw SQL.
 
-したがって目標は「すべて型で塞ぐ」ではない。**すべての経路について、塞ぐか明示するかを決めること**である。
+So the goal is not "close everything in types". It is **to decide, for every
+route, whether it is closed or stated.**
 
 ```text
-知らない埋め残し   → 危険。AIと人間の両方が「保証されている」と誤解する
-明示された境界     → 管理できる。レビュー対象として特定できる
+an unknown gap    → dangerous. Both AI and human believe it is guaranteed
+a stated boundary → manageable. It can be identified as a review subject
 ```
 
-このファイルは全経路を列挙し、それぞれの状態を追跡する。
+This file enumerates every route and tracks its state.
 
 ---
 
-## 経路が生まれる3つの構造的原因
+## The three structural causes
 
-個別に塞ぐとモグラ叩きになる。原因は3つに集約される。
+Closing routes individually is whack-a-mole. The causes reduce to three.
 
-| 原因 | 該当経路 | 構造的な対処 |
+| Cause | Routes | The structural response |
 |---|---|---|
-| **1. Domain Modelが普通のRust structとして公開されている** | 直接代入 / `into_owned` / Debug漏れ / 内部可変性 / **`Repr` 経由の構築と読出し（path 21）** | Domainを不透明化し、Capability付きアクセサ経由のみにする。**ただし不透明化だけでは足りない** — 永続化のために生成される `Repr` が横に開く（path 21）。閉じ方は #18 |
-| **2. Capabilityを運べる型に寿命・経路の制約がない** | spawn / テストのgod-mode / `when`漏出 / `dyn Repository` / Endpointに`PgPool` | `Ctx<'req, E>`でリクエスト寿命に縛り、構築経路をsealedにする |
-| **3. Contractを要求していない場所でEffectが起きる** | `emits`の先 / Middleware / Repository実装 / 自由関数コンストラクタ / `Condition::holds` | Contractを要求する場所を増やす（段階的） |
+| **1. The domain model is exposed as an ordinary Rust struct** | Direct assignment / `into_owned` / a `Debug` leak / interior mutability / **construction and reading through `Repr` (path 21)** | Make the domain opaque, reachable only through capability-checked accessors. **But opacity alone is not enough** — the `Repr` generated for persistence opens a route alongside it (path 21). How it is closed is #18 |
+| **2. Nothing constrains the lifetime or route of a type that can carry a capability** | spawn / the test god-mode / a `when` leak / `dyn Repository` / a `PgPool` on the endpoint | Bind it to the request lifetime with `Ctx<'req, E>` and seal the construction route |
+| **3. Effects happen where no contract is required** | The far side of `emits` / middleware / a repository implementation / free-function constructors / `Condition::holds` | Increase the places that require a contract (in stages) |
 
 ---
 
-## 全経路台帳
+## The full ledger
 
-### 原因1: Domain Modelの公開形式
+### Cause 1: how the domain model is exposed
 
-| # | 経路 | 対処 | 状態 |
+| # | Route | Response | State |
 |---|---|---|---|
-| 1 | `user.email = v` 直接代入 | Domain不透明化（privateフィールド） | **First PoCで塞ぐ** |
-| 2 | `*user = other_user`（`find`で2件取って入れ替え） | 構築経路の制限だけでは塞げない | **明示**（下記） |
-| 3 | `into_owned()` でProjectionを解除 | **提供しない** | **First PoCで塞ぐ**。⚠️ ただし `Repr` に `Clone` を derive すると復活する（path 21 参照） |
-| 4 | `Debug` / `Serialize` 経由のデータ漏れ | 宣言Fieldのみを出す独自実装をderive生成 | **First PoCで塞ぐ**。⚠️ 対処は**Domain 側にしか課されていない** — `Repr` に `Debug` を derive すると別クレートからも漏れる（path 21 参照） |
-| 5 | 内部可変性（`RefCell` / `Mutex` / `Cell`）経由のMutation | Domainフィールド型を制限（`Freeze`が安定するまでホワイトリスト） | **First PoCで塞ぐ** |
-| 21 | **`User::from_repr(UserRepr { .. })` / `as_repr()` がDomainのクレート内のどこからでも到達可能** | 未定（#17 / #18 で決定） | ⚠️ **開いている**（T-M1-01 / #13 で実測。下記） |
+| 1 | `user.email = v`, direct assignment | Domain opacity (private fields) | **Closed in the First PoC** |
+| 2 | `*user = other_user` (fetch two with `find` and swap) | Restricting the construction route does not close it | **Stated** (below) |
+| 3 | Escaping a projection with `into_owned()` | **Not provided** | **Closed in the First PoC.** ⚠️ But deriving `Clone` on `Repr` brings it back (see path 21) |
+| 4 | A data leak through `Debug` / `Serialize` | A custom implementation emitting declared fields only, derive-generated | **Closed in the First PoC.** ⚠️ The response is **imposed only on the domain side** — deriving `Debug` on `Repr` leaks from within the same crate (see path 21) |
+| 5 | Mutation through interior mutability (`RefCell` / `Mutex` / `Cell`) | Restrict domain field types (a whitelist until `Freeze` stabilises) | **Closed in the First PoC** |
+| 21 | **`User::from_repr(UserRepr { .. })` / `as_repr()` reachable from anywhere in the domain's crate** | Undecided (settled in #17 / #18) | ⚠️ **Open** (measured in T-M1-01 / #13; below) |
 
-> **番号は追記のみで、振り直さない。** path 12 / 13 / 14 は [`../rules/api-surface.md`](../rules/api-surface.md)・[`../rules/proc-macro.md`](../rules/proc-macro.md)・知見バンクから参照されており、振り直すと全ての相互参照が無言で壊れる。原因ごとのグルーピングより番号の安定を優先する。
+> **Numbers are only ever appended, never renumbered.** Paths 12 / 13 / 14 are
+> referenced from [`../rules/api-surface.md`](../rules/api-surface.md),
+> [`../rules/proc-macro.md`](../rules/proc-macro.md) and the knowledge banks;
+> renumbering would silently break every cross-reference. Stability of the numbers
+> takes priority over grouping by cause.
 
-#### path 21 — `Repr` は「Repository 実装だけ」には閉じられない（コンパイル検証済み）
+#### path 21 — `Repr` cannot be confined to "the repository implementation only" (compile-verified)
 
-`#[derive(Domain)]` は**利用者のクレートで展開される**ので、生成される `pub(crate) struct UserRepr` と `pub(crate) fn from_repr` / `as_repr` の可視性は**そのアプリクレート全体**である。derive は Repository がどのモジュールに書かれるかを知らないため `pub(in ...)` を出せない。結果、読み方が2つあって**どちらでも成立しない**。
+`#[derive(Domain)]` **expands in the user's crate**, so the visibility of the
+generated `pub(crate) struct UserRepr` and `pub(crate) fn from_repr` / `as_repr`
+is **the whole application crate.** The derive cannot emit `pub(in ...)` because it
+does not know which module the repository is written in. That leaves two readings,
+and **neither works.**
 
-| Repository の置き場所 | 実測 |
+| Where the repository lives | Measured |
 |---|---|
-| Domain と同一クレート（単一クレートアプリ） | クレート内のあらゆるハンドラが `User::from_repr(UserRepr { email: 任意, .. })` を書ける。Capability も Repository も SQL も `unsafe` も不要 |
-| 別クレート | `Repr` が全く見えない（`E0603`）。設計が機能しない |
+| The same crate as the domain (a single-crate application) | Any handler in the crate can write `User::from_repr(UserRepr { email: anything, .. })`. No capability, no repository, no SQL, no `unsafe` |
+| A separate crate | `Repr` is entirely invisible (`E0603`). The design does not function |
 
-**path 2 との比較は軸で分かれる。「厳密に上位互換」ではない。**
+**The comparison with path 2 splits by axis. It is not strictly worse.**
 
-| 軸 | どちらが悪いか |
+| Axis | Which is worse |
 |---|---|
-| 値の自由度 | **21**。path 2（`*user = other_user`）は `find` が実際に返した値しか入れられないが、21 は値を**発明できる**。前提も軽い（Capability も `find` の結果も不要） |
-| 到達範囲と恒久性 | **2**。path 2 は `&mut D` があればクレート境界を越えて成立し、**21 を閉じても残る**（本ファイルの「原理的に埋まらないもの」に分類済み）。21 は crate-local で、閉じれば消える |
+| Freedom of values | **21.** Path 2 (`*user = other_user`) can only insert values `find` actually returned, whereas 21 can **invent** them. Its preconditions are lighter too (no capability, no `find` result) |
+| Reach and permanence | **2.** Path 2 holds across a crate boundary given a `&mut D`, and **survives closing 21** (it is classified below under what cannot be closed in principle). 21 is crate-local and disappears once closed |
 
-偽造した `User` の getter が実行時にも通ることは確認済み（spike の P8）。ただし**ロードした `User` と直接比較したわけではない**ので、「区別できない」は getter の挙動についての観察である。
+A forged `User`'s getters were confirmed to work at run time (probe P8 of the
+spike). But **it was not compared against a loaded `User`**, so "indistinguishable"
+is an observation about getter behaviour.
 
-**フィールドの private 化自体は効いている。ただし保証範囲は「定義モジュールの外から」であって、型の境界ではない**（実測）。定義モジュールとその子モジュールからは `u.0.email = v` が通り、**マクロは利用者の `struct User` と同じモジュールに展開される**ので、利用者がその横に書く `impl` やヘルパは緩い側に立つ。`E0616` に詰まった AI の最短の回避策は「そのコードを Domain 定義ファイルに移す」ことである（ARK-002 の教科書例）。
+**Making the fields private does work, but the guarantee is "from outside the
+defining module", not a type boundary** (measured). From the defining module and
+its children `u.0.email = v` compiles, and **the macro expands in the same module
+as the user's `struct User`**, so an `impl` or helper the user writes next to it
+stands on the permissive side. The shortest workaround for an AI stuck on `E0616`
+is "move that code into the domain definition file" — the textbook case for
+ARK-002.
 
-エラーコードは形で変わる（実測。当初この行は両方を `E0616` と書いていたが、`u.email = v` にはプローブが存在しなかった）。
+The error code varies with the shape (measured; this line originally gave `E0616`
+for both, because no probe existed for `u.email = v`).
 
-| 形 | 実際に出るコード |
+| Shape | The code actually emitted |
 |---|---|
-| newtype + `email()` getter あり（**実際の設計の形**） | **`E0615`**（メソッドの値を取ろうとした） |
-| newtype + getter なし | `E0609`（そんなフィールドは無い） |
-| フラットな private 名前付きフィールド、**モジュール外**から | `E0616`（フィールドが private） |
-| newtype の `u.0.email`、モジュール外から | `E0616` |
-| 内側フィールドを `pub(crate)` にした場合 | **通る** — だから derive は private を出さなければならない |
+| Newtype with an `email()` getter (**the shape of the real design**) | **`E0615`** (attempted to take the value of a method) |
+| Newtype without the getter | `E0609` (no such field) |
+| A flat private named field, from **outside the module** | `E0616` (field is private) |
+| A newtype's `u.0.email`, from outside the module | `E0616` |
+| The inner field made `pub(crate)` | **It compiles** — which is why the derive must emit private |
 
-**`E0615` / `E0609` は `#[diagnostic::…]` で文言を差し替えられない**（3層防御の外）。したがって path 21 をどう閉じても、この形の誤りに対して Contract への誘導は出せない。閉じ方の設計は診断の設計と同時に決める必要がある。
+**`E0615` and `E0609` cannot have their wording replaced with `#[diagnostic::…]`**
+(they sit outside the three defence layers). So however path 21 is closed, no
+guidance toward the contract can be emitted for this class of mistake. How it is
+closed has to be decided together with how it is diagnosed.
 
-**`Repr` は path 21 だけでなく path 3 / path 4 も開ける。** `Repr` に `Debug` を derive すると宣言 Field 外を含む全フィールドが `format!("{:?}")` で出て（path 4 の対処は Domain 側にしか課されていない）、`Clone` を derive すると完全所有コピーが取れる（path 3 の `into_owned` 相当）。**仕様形では同一クレート内に限る** — 外部クレートは `as_repr` に到達できず `E0624`（実測。当初ここに「別クレートからも漏れる」と書いたが誤りだった）。
+**`Repr` opens paths 3 and 4 as well as 21.** Deriving `Debug` on `Repr` prints
+every field, including undeclared ones, via `format!("{:?}")` (path 4's response
+is imposed only on the domain side), and deriving `Clone` yields a fully owned
+copy — the equivalent of path 3's `into_owned`. **In the specified shape this is
+confined to the same crate** — an external crate cannot reach `as_repr` and gets
+`E0624` (measured; this originally said "leaks from another crate too", which was
+wrong).
 
-生成コードの制約に「`Repr` に `Debug` / `Clone` / `Serialize` / **`Deserialize`** を derive しない」が加わる。**一般形で覚えること — 定義側モジュール内で構造体を組む derive 由来のコンストラクタは、何であれ偽造経路になる。** `FromRow` も `Deserialize` も同じ機構であり、禁止リストの列挙方式では derive を1つ足すだけで穴が開く。
+The constraints on generated code gain "do not derive `Debug` / `Clone` /
+`Serialize` / **`Deserialize`** on `Repr`". **The general form to remember: any
+derive-produced constructor that assembles the struct inside the defining module
+is a forging route.** `FromRow` and `Deserialize` are the same mechanism, and an
+enumerated ban list opens a hole the moment one more derive is added.
 
-再現とプローブ表: `spikes/domain-opacity-sqlx/`（`bash run.sh`）。仕様側の記述は [`persistence.md`](./persistence.md) §判定。**閉じ方を spike で決めなかったのは意図的** — この経路は Domain の公開形式そのものなので、選択が M2 の derive タスク群の形を決めてしまう（ARK-002: 代替を用意せずに塞ぐと検査されない経路へ人を押し出す）。
+Reproduction and the probe table: `spikes/domain-opacity-sqlx/`
+(`bash run.sh`). The specification-side account is in
+[`persistence.md`](./persistence.md) §Verdict. **Not deciding how to close it in
+the spike was deliberate** — this route is the domain's exposure form itself, so
+the choice determines the shape of M2's derive tasks (ARK-002: blocking without an
+alternative pushes people onto unchecked routes).
 
-### 原因2: Capabilityの寿命と経路
+### Cause 2: the lifetime and route of a capability
 
-| # | 経路 | 対処 | 状態 |
+| # | Route | Response | State |
 |---|---|---|---|
-| 6 | `tokio::spawn` で `Ctx` を持ち出す | `Ctx<'req, E>`（`'static`でなくする。`Send`は保つ） | **First PoCで塞ぐ** |
-| 7 | `static Sender<Ctx<E>>` へ譲渡 | 同上 | **First PoCで塞ぐ** |
-| 8 | `when` スコープから `Ok(ctx)` で漏出 | クロージャ戻り型を `Result<()>` に固定 | **First PoCで塞ぐ** |
-| 9 | `Ctx::for_test()` がgod-modeコンストラクタになる | sealedな`Runtime`トークンを要求。テストはEndpoint型を固定したAPI経由 | **First PoCで塞ぐ** |
-| 10 | Endpoint構造体に `PgPool` を持つ | `#[endpoint]` がunit struct以外を拒否 | **First PoCで塞ぐ** |
-| 11 | Serviceに `dyn Repository` を渡す（型パラメータが消える） | `dyn Repository` を公開しない。Serviceも Capability でパラメタライズ | **First PoCで塞ぐ** |
-| 12 | 手書き `impl Endpoint` で任意のCapabilityを宣言 | `Endpoint` を sealed trait 化 | **First PoCで塞ぐ** |
-| 13 | `impl Includes<Order> for User`（ローカル型なのでorphan ruleを通る） | `Includes` を sealed trait 化 | ⚠️ **暫定閉鎖**（T-M0-06 / #6。下記の再検証条件つき） |
-| 14 | `impl Field<...>` の偽装（`Field::NAME` を偽ると生成 SQL の列名を偽れる） | sealed trait 化 | **First PoCで塞ぐ**（`Field` 未実装） |
-> ### ⚠️ 14a〜14e は **M2 で再オープンしうる — ただし seal を分割したので、しない**（#9 のレビューで検出）
->
-> 下の path 13 の注記が「M2 は `#[doc(hidden)] pub mod __private` を導入せざるを得ない」「そこが seal の強度が下がる瞬間」と書いている。**その警告は 13 にしか付いていなかった。** 全 seal が1モジュールにあれば、その1回の変更で**すべての seal が名指し可能**になり、14a〜14e が同時に再オープンする — 実際にその変更を加えて downstream から偽の所属がコンパイルすることを確認した。
->
-> 対処として seal を**2モジュールに分割**した（#9）。`private` は**構造的** seal（`SealedConsList` / `SealedIndex` / `SealedHas` / `SealedAppend` / `SealedLookup`）を持ち、verum が自分でタプルに実装するだけで derive は関与しないので **`pub(crate)` を恒久的に維持**する。`derive_facing` は derive が満たす必要のある seal（現状 `SealedIncludes`）だけを持ち、M2 で公開されるのはこちらだけになる。
->
-> したがって **14a〜14e の ✅ は M2 を越えて有効**であり、13 の ⚠️ 暫定閉鎖は `derive_facing` の側の話として残る。`compile_fail/sealed_derive_facing_module_is_private.rs` が現状を固定しており、M2 が開けた瞬間に `.stderr` の diff として現れる。
+| 6 | Carrying `Ctx` out with `tokio::spawn` | `Ctx<'req, E>` (not `'static`; `Send` preserved) | **Closed in the First PoC** |
+| 7 | Handing it to a `static Sender<Ctx<E>>` | Same | **Closed in the First PoC** |
+| 8 | Leaking out of a `when` scope with `Ok(ctx)` | The closure's return type is fixed to `Result<()>` | **Closed in the First PoC** |
+| 9 | `Ctx::for_test()` as a god-mode constructor | Require a sealed `Runtime` token; testing goes through an API with a fixed endpoint type | **Closed in the First PoC** |
+| 10 | A `PgPool` on the endpoint struct | `#[endpoint]` rejects anything but a unit struct | **Closed in the First PoC** |
+| 11 | Passing a `dyn Repository` to a service (the type parameters vanish) | Do not expose `dyn Repository`; parameterise the service by capabilities too | **Closed in the First PoC** |
+| 12 | A hand-written `impl Endpoint` declaring arbitrary capabilities | Seal `Endpoint` | **Closed in the First PoC** |
+| 13 | `impl Includes<Order> for User` (a local type, so it passes the orphan rule) | Seal `Includes` | ⚠️ **Provisionally closed** (T-M0-06 / #6; with the re-verification condition below) |
+| 14 | Forging `impl Field<...>` (forging `Field::NAME` forges the column name in generated SQL) | Seal it | **Closed in the First PoC** (`Field` unimplemented) |
+| 14a | `impl Has<Elem, Idx> for <set>` — forging membership itself. **The head position (`Here`) and non-head positions (`There<_>`) are separate routes** | Seal `Has`, **and make the seal's recursive impl conditional too** | ✅ **Closed** (T-M0-08 / #8; `has_cannot_be_forged.rs` + `has_cannot_be_forged_at_depth.rs`) — read the note below |
+| 14b | `impl ConsList for MyType` — forging the shape proof, making a malformed set look well-formed | Seal `ConsList` | ✅ **Closed** (T-M0-07 / #7; `cons_list_cannot_be_forged.rs`). The tuple shape is also closed by the orphan rule (E0117) (re-checked in T-M0-08) |
+| 14c | `impl Index for MyIdx` — forging the position of membership | Seal `Index` | ✅ **Closed** (T-M0-07 / #7; `index_cannot_be_forged.rs`). `There<MyIdx>` and `There<There<MyIdx>>` are closed by the orphan rule too (re-checked in T-M0-08) |
+| 14d | `impl Append<B> for <set>` — forging the concatenation result. It has a `type Out`, so **the composed capability set itself can be named** | Make `Append`'s seal **match** the trait (including the base impl's `B: ConsList`) | ✅ **Closed** (T-M0-09 / #9; `append_cannot_be_forged_at_base.rs` + `_at_depth.rs`). **It had once been closed on a miss** — note below |
+| 14e | `impl Lookup<K, Idx> for <map>` — forging "the entry for this key is this", swapping a conditional scope arbitrarily | Make `Lookup`'s seal **match** the trait (including the head impl's `T: ConsList`) | ✅ **Closed** (T-M0-09 / #9; `lookup_cannot_be_forged_at_head.rs` + `_at_depth.rs`). **It had once been closed on a miss** — note below |
+| 14f | `impl Has<H, Idx> for (H, <non-cons-list>)` — **passing a malformed set through the capability check.** **The head and deep positions alike** (`impl Has<Other, There<There<Here>>> for (Decl, (Elem, (Other, Junk)))` compiles). Membership itself is true, so no capability is gained | None (`Has`'s seal deliberately drops `ConsList` for diagnostics — `SEAL-DIFF`) | ⚠️ **Stated** (until T-M2-09). `ConsList`'s "a malformed set fails closed" can be defeated downstream. But **only when the element is a bare local type** — a real effect type `Mutate<User, Email>` wraps the local type in verum's generics, so the orphan rule (E0117) closes it (measured). So it is **unreachable for effect sets and limited to domain-shaped elements.** `has_forged_membership_on_malformed_set.rs` (head) and `has_forged_membership_at_depth_on_malformed_set.rs` (depth) pin the side where *false* membership is rejected, at both positions. **It is not "permanent"** — once T-M2-09 asserts the shape at the declaration site, or conditional `on_unimplemented` stabilises, the `SEAL-DIFF` justification lapses and the bound can be restored |
 
-| 14a | `impl Has<Elem, Idx> for <集合>` — 所属判定そのものの偽装。**先頭位置（`Here`）と先頭以外（`There<_>`）は別経路** | `Has` を sealed trait 化し、**seal の再帰 impl も条件付きにする** | ✅ **閉鎖済み**（T-M0-08 / #8。`has_cannot_be_forged.rs` + `has_cannot_be_forged_at_depth.rs`）— 下記の注記を読むこと |
-| 14b | `impl ConsList for MyType` — 形の証明を偽装し、壊れた集合を well-formed に見せる | `ConsList` を sealed trait 化 | ✅ **閉鎖済み**（T-M0-07 / #7。`cons_list_cannot_be_forged.rs`）。タプル形は orphan rule（E0117）でも塞がれている（T-M0-08 で追試） |
-| 14c | `impl Index for MyIdx` — 所属位置を偽装する | `Index` を sealed trait 化 | ✅ **閉鎖済み**（T-M0-07 / #7。`index_cannot_be_forged.rs`）。`There<MyIdx>` / `There<There<MyIdx>>` も orphan rule で塞がれている（T-M0-08 で追試） |
-| 14d | `impl Append<B> for <集合>` — 連結結果の偽装。`type Out` を持つので**合成後の Capability 集合そのものを名指しできる** | `Append` の seal を trait と**一致**させる（base impl の `B: ConsList` を含む） | ✅ **閉鎖済み**（T-M0-09 / #9。`append_cannot_be_forged_at_base.rs` + `_at_depth.rs`）。**いちど空振りで閉鎖していた** — 下記注記 |
-| 14f | `impl Has<H, Idx> for (H, <非 cons list>)` — **壊れた集合を capability 検査に通す**。**先頭位置も深い位置も同様**（`impl Has<Other, There<There<Here>>> for (Decl, (Elem, (Other, Junk)))` は通る）。所属自体は真なので capability の増加は無い | なし（`Has` の seal は診断のため意図的に `ConsList` を落としている — `SEAL-DIFF`） | ⚠️ **明示**（T-M2-09 まで）。`ConsList` の「壊れた集合は fail closed」は downstream から無効化できる。ただし**要素が素のローカル型のときだけ** — 実効果型 `Mutate<User, Email>` は verum のジェネリクスがローカル型を包むので orphan rule（E0117）で塞がれる（実測）。つまり**effect 集合では到達不能で、domain 形の要素に限る**。`has_forged_membership_on_malformed_set.rs`（先頭）と `has_forged_membership_at_depth_on_malformed_set.rs`（深さ）が*偽の*所属が拒否される側を両位置で固定している。**「恒久的」ではない** — T-M2-09 が宣言箇所で形をアサートするか、条件付き `on_unimplemented` が stable 化すれば `SEAL-DIFF` の正当化は失効し、bound を戻せる |
-| 14e | `impl Lookup<K, Idx> for <map>` — 「その鍵に対応するエントリはこれだ」の偽装。条件付きスコープを任意に差し替えられる | `Lookup` の seal を trait と**一致**させる（head impl の `T: ConsList` を含む） | ✅ **閉鎖済み**（T-M0-09 / #9。`lookup_cannot_be_forged_at_head.rs` + `_at_depth.rs`）。**いちど空振りで閉鎖していた** — 下記注記 |
+> ### ⚠️ 14a–14e **could reopen at M2 — but will not, because the seal was split** (found in #9's review)
+>
+> The path-13 note below says "M2 will be forced to introduce
+> `#[doc(hidden)] pub mod __private`" and "that is the moment the seal's strength
+> drops". **That warning was attached only to 13.** With every seal in one module,
+> that single change makes **every seal nameable**, reopening 14a–14e at once — and
+> making that change did indeed let a forged membership compile downstream.
+>
+> In response the seal was **split into two modules** (#9). `private` holds the
+> **structural** seals (`SealedConsList` / `SealedIndex` / `SealedHas` /
+> `SealedAppend` / `SealedLookup`); verum implements them on tuples itself with no
+> derive involvement, so it stays **`pub(crate)` permanently.** `derive_facing`
+> holds only the seals a derive must satisfy (today, `SealedIncludes`), and only
+> that one is exposed at M2.
+>
+> So **14a–14e's ✅ survives M2**, and 13's ⚠️ provisional closure remains a
+> `derive_facing` matter.
+> `compile_fail/sealed_derive_facing_module_is_private.rs` pins the current state,
+> and the moment M2 opens it, it surfaces as a `.stderr` diff.
 
-> ### ⚠️ 14d / 14e も空振りで閉鎖されていた（#9 のレビューで検出、14a に続いて2度目）
+> ### ⚠️ 14d and 14e had also been closed on a miss (found in #9's review, the second time after 14a)
 >
-> #9 は 14a の教訓に従って**最深位置**のフィクスチャを両方に付けた。開いていたのは**最浅位置**だった — `Append` の `for ()`（base）と `Lookup` の head である。`Append` の base は**全ての連結が bottom out する床**なので、`impl Append<Local> for ()` の1行が**プログラム中の全ての連結結果を書き換えた**。
+> Following 14a's lesson, #9 added a **deepest-position** fixture to both. What was
+> open was the **shallowest** — `Append`'s `for ()` (the base) and `Lookup`'s head.
+> `Append`'s base is **the floor every concatenation bottoms out on**, so one line
+> of `impl Append<Local> for ()` **rewrote every concatenation result in the
+> program.**
 >
-> 原因は seal が形の bound を落としていたこと。「verum の impl に `B: ConsList` が付いているから守られている」と読んだのが誤りで、**verum の impl に付けた bound は外部 impl には課されない**。
+> The cause was the seal dropping the shape bound. Reading it as "verum's impl has
+> `B: ConsList`, so it is protected" was the mistake: **a bound on verum's impl is
+> not imposed on a foreign impl.**
 >
-> 台帳の運用として: **閉鎖の根拠は「全 impl 位置を覆っている」であり、最深だけでも最浅だけでも足りない。** [api-surface.md](../rules/api-surface.md) §2 の表で空欄（`—`）を許さないこと — #9 ではその空欄が穴の所在をそのまま指していた。
+> As a ledger practice: **the basis for closure is "every impl position is
+> covered", and neither the deepest nor the shallowest alone is enough.** Allow no
+> blank (`—`) in [api-surface.md](../rules/api-surface.md) §2's table — in #9 that
+> blank pointed straight at where the hole was.
 
-> ### ⚠️ 14a はいちど**空振りで閉鎖されていた**（T-M0-08 のレビューで検出）
+> ### ⚠️ 14a had once been **closed on a miss** (found in T-M0-08's review)
 >
-> #8 は当初 `has_cannot_be_forged.rs`（`Here` + 非タプル `Self`）だけで 14a を閉じたと記録した。**どちらも seal の head impl が既に閉じていた経路**で、実際に開いていた `There<_>` 経路は覆われていなかった — 行の記述自体が `impl Has<Elem, Here> for MyList` と**浅い側だけを書いていた**ため、フィクスチャは行に一致し行はフィクスチャに一致して、どちらも本当の穴を外した。
+> #8 originally recorded 14a as closed on the strength of
+> `has_cannot_be_forged.rs` alone (`Here` plus a non-tuple `Self`). **Both were
+> routes the seal's head impl already closed**, and the genuinely open `There<_>`
+> route was not covered — the ledger row itself wrote only the shallow side,
+> `impl Has<Elem, Here> for MyList`, so the fixture matched the row and the row
+> matched the fixture while both missed the real hole.
 >
-> 教訓は台帳の運用そのものに関わる: **閉鎖の根拠は「フィクスチャが1つある」ではなく「その trait の impl 位置すべてを覆っている」** である。再帰 impl を持つ trait は最浅と最深の両方を固定すること（[api-surface.md](../rules/api-surface.md) §2 に規則化）。
+> The lesson concerns the ledger's practice: **the basis for closure is not "there
+> is a fixture" but "every impl position of that trait is covered".** A trait with
+> a recursive impl pins both the shallowest and the deepest (made a rule in
+> [api-surface.md](../rules/api-surface.md) §2).
 >
-> **型引数を持つ sealed trait ほど露出が大きい。** 14b/14c が実際には無傷だったのは、`ConsList` / `Index` が型引数を持たず、ローカル型が入れる位置が `Self` しかないためである（タプルや `There<_>` は `Self` ではローカル型にならないので orphan rule が先に弾く）。`Has<T, Idx>` は `T` にローカル要素型を置けるので orphan rule を通ってしまい、seal が唯一の防御になる。**新しい sealed trait を審査するときは、まず型引数の数を見ること。**
+> **The more type arguments a sealed trait has, the larger its exposure.** 14b and
+> 14c turned out to be intact because `ConsList` and `Index` have no type
+> arguments, leaving `Self` as the only position a local type can occupy (a tuple
+> or `There<_>` is not a local type in `Self`, so the orphan rule rejects it
+> first). `Has<T, Idx>` allows a local element type at `T`, so it passes the orphan
+> rule and the seal is the only defence. **When reviewing a new sealed trait, look
+> at its type-argument count first.**
 
-> **path 14 は3分割された。** 当初 `Has` と `Field` を1行にまとめていたが、閉鎖の根拠は**その trait が seal を supertrait に持つこと**であり、trait ごとに時期が違う。まとめたままにすると `Has` が閉じた時点で `Field` も閉じたと誤読される。#7 で `ConsList` / `Index` を分けたのと同じ理由。
+> **Path 14 was split into three.** `Has` and `Field` were originally one row, but
+> the basis for closure is **that the trait carries the seal as a supertrait**, and
+> that lands at different times per trait. Left combined, closing `Has` would read
+> as closing `Field` too. The same reason `ConsList` / `Index` were split out in #7.
 
-> 注: #14 について、`impl Has<Mutate<User, Password>> for ()` は `Has` も `()` も外部型であり、`Mutate<User, ..>` は型引数にローカル型を含むだけでlocal typeではないため、**orphan ruleで防がれる可能性が高い**（当初未検証）。一方 #13 は `User` がローカル型なので確実に通る。sealed化はどちらにも有効なので、区別せず適用する。
+> Note on #14: for `impl Has<Mutate<User, Password>> for ()`, `Has` and `()` are
+> both foreign, and `Mutate<User, ..>` merely contains a local type as a type
+> argument rather than being local, so **the orphan rule most likely prevents it**
+> (originally unverified). #13, by contrast, definitely passes because `User` is
+> local. Sealing helps in both cases, so it is applied without distinction.
 >
-> **T-M0-06 で実測した（上の推測は「この形については」正しく、一般則としては誤り）**:
+> **Measured in T-M0-06** (the guess above is right *for this shape* and wrong as a
+> general rule):
 > ```text
-> impl verum::Includes<Order>      for ()  ->  E0277（orphan は通る。seal だけが止めている）
-> impl verum::Includes<Vec<Order>> for ()  ->  E0117（外部ジェネリクスに包むと local 扱いされない）
+> impl verum::Includes<Order>      for ()  ->  E0277 (the orphan rule passes; only the seal stops it)
+> impl verum::Includes<Vec<Order>> for ()  ->  E0117 (wrapped in foreign generics, it is not treated as local)
 > ```
-> **ローカル型が trait の型引数に直接現れれば orphan rule は通る。** `Mutate<User, ..>` のように外部ジェネリクスの内側にあると通らない。つまり #14 の推測は `Has<Mutate<..>>` の形に限れば正しいが、「型引数にローカル型を含むだけなら防がれる」と一般化すると誤りである。**どちらにせよ orphan rule に依存してはならず、seal が唯一の防御**という結論は変わらない。
+> **If a local type appears directly as a trait's type argument, the orphan rule
+> passes.** Inside foreign generics, as with `Mutate<User, ..>`, it does not. So
+> #14's guess is correct for the `Has<Mutate<..>>` shape specifically, but
+> generalising it to "merely containing a local type as a type argument is
+> prevented" is wrong. **Either way the orphan rule must not be relied on, and the
+> conclusion that the seal is the only defence is unchanged.**
 
-> **#13 の閉鎖について（T-M0-06 / #6）**: seal の基盤と `Includes<D>: SealedIncludes<D>` の sealed 化が入り、UI テストが `impl verum::Includes<Order> for User {}` の失敗を `.stderr` ごと固定した。
+> **On #13's closure (T-M0-06 / #6)**: the seal foundation plus sealing
+> `Includes<D>: SealedIncludes<D>` landed, and a UI test pinned the failure of
+> `impl verum::Includes<Order> for User {}` down to its `.stderr`.
 >
-> **閉鎖の根拠は「`Sealed` が存在すること」ではなく「その trait が `Sealed` を supertrait に持つこと」**なので、#12（`Endpoint`）と #14（`Field`）は当該 trait が実装される M2 まで開いたままとする（`Has` は 14a として分離され T-M0-08 で閉鎖）。基盤ができた時点でまとめて閉じたことにしない。
+> **The basis for closure is not "a `Sealed` exists" but "that trait carries
+> `Sealed` as a supertrait"**, so #12 (`Endpoint`) and #14 (`Field`) stay open
+> until the trait in question is implemented at M2 (`Has` was split out as 14a and
+> closed in T-M0-08). Do not treat the foundation landing as closing them all.
 >
-> **⚠️ 暫定閉鎖である理由（T-M0-07 のレビューで判明）**: 現在 path 13 が閉じているのは、**`SealedIncludes<D>` を誰も満たせない**からである — `verum-macros` は macro を1つも出していない。かつ [`../rules/api-surface.md`](../rules/api-surface.md) §2 が記録するとおり、**proc-macro の出力は呼び出し側クレートで解決されるため `pub(crate) mod private` に到達できない**（E0603 を実測）。M2 は `#[doc(hidden)] pub mod __private` を導入せざるを得ず、§2 自身が「そこが seal の強度が下がる瞬間」と書いている。
+> **⚠️ Why it is provisional (discovered in T-M0-07's review)**: path 13 is closed
+> today because **nobody can satisfy `SealedIncludes<D>`** — `verum-macros` emits no
+> macros at all. And as [`../rules/api-surface.md`](../rules/api-surface.md) §2
+> records, **a proc macro's output resolves in the calling crate and so cannot reach
+> `pub(crate) mod private`** (E0603, measured). M2 will be forced to introduce
+> `#[doc(hidden)] pub mod __private`, and §2 itself says that is the moment the
+> seal's strength drops.
 >
-> **したがって今日の緑は M2 の緑の証拠ではない。** 再検証条件: `__private` 導入後に、derive が1ドメイン分の seal を出した状態で `impl Includes<未宣言>` が **E0277 になること**と、宣言済みが**通ること**を双方向で確認する（T-M0-06 で実施した手順と同一）。
+> **So today's green is not evidence of M2's green.** The re-verification
+> condition: after `__private` is introduced, with the derive emitting one domain's
+> seal, confirm in both directions that `impl Includes<undeclared>` **is E0277** and
+> that a declared one **compiles** (the same procedure used in T-M0-06).
 >
-> **derive が入っても閉じたままであること**が、この閉鎖の要点である。当初 seal を `Sealed`（`Self` のみ）で書いたところ、Tier-2 レビューが「derive が `Sealed` を1つ生成した瞬間、`impl Includes<未宣言>` が通る」ことを実測で示した。seal を `SealedIncludes<D>` に変えて**関係そのものを封じ**、偽装が E0277 になることと宣言済みが通ることを両方向で確認済み。詳細は [`../rules/api-surface.md`](../rules/api-surface.md) §2「seal は対象 trait の型引数を持たなければならない」。
+> **That it stays closed once the derive lands** is the point of this closure. The
+> seal was originally written as `Sealed` (over `Self` only), and a Tier-2 review
+> demonstrated by measurement that the moment a derive generates one `Sealed`,
+> `impl Includes<undeclared>` compiles. Changing the seal to `SealedIncludes<D>`
+> **seals the relation itself**, and both directions were confirmed: forgery is
+> E0277 and a declared one compiles. Detail in
+> [`../rules/api-surface.md`](../rules/api-surface.md) §2, "a seal must carry the
+> target trait's type arguments".
 
-### 原因3: Contractの外で起きるEffect
+### Cause 3: effects that happen outside the contract
 
-| # | 経路 | 対処 | 状態 |
+| # | Route | Response | State |
 |---|---|---|---|
-| 15 | `emits` の購読側が任意のEffectを起こす | 購読側にContract必須化 + 推移閉包をAI Contextに出力 | **後回し（明示）** |
-| 16 | MiddlewareのEffectがContractに現れない | MiddlewareにContract必須化 + Routerが合成 | **後回し（明示）** |
-| 17 | Repository実装内部の生SQL | derive生成で境界を移す / SQL Lint | **後回し（明示）** |
-| 18 | 自由関数コンストラクタ内の副作用（`AuditLog::user_updated()` 等） | コンストラクタをderive生成して手書きを消す | **後回し（明示）** |
-| 22 | **`observed_effects` の走査が Service 本体に届かない**（Q-A の決定で `handle` のみを走査すると決めたことの帰結） | Effect を持つアイテムを全て注釈しビルド時に推移閉包を取る（将来形）。当面は `scope: "handle_only"` と `deferred` で明示 | **明示**（Q-A / 2026-08-15） |
-| 19 | `creates` + `deletes` でField粒度を迂回（upsert） | deriveが同一Domainの併記を拒否 / `create`は新規IDのみ | **後回し** |
-| 20 | `Condition::holds` が `true` を返すだけで全解錠 | **原理的に不可能** | **恒久的に明示** |
+| 15 | A subscriber to `emits` causes arbitrary effects | Require a contract on the subscriber + emit the transitive closure in the AI Context | **Deferred (stated)** |
+| 16 | Middleware effects do not appear in the contract | Require a contract on middleware + have the router compose them | **Deferred (stated)** |
+| 17 | Raw SQL inside a repository implementation | Move the boundary by generating the implementation / an SQL lint | **Deferred (stated)** |
+| 18 | Side effects inside a free-function constructor (`AuditLog::user_updated()` and the like) | Generate the constructors and remove the room for hand-writing | **Deferred (stated)** |
+| 19 | Bypassing field granularity with `creates` + `deletes` (an upsert) | The derive rejects declaring both for one domain / `create` takes new IDs only | **Deferred** |
+| 20 | `Condition::holds` unlocks everything by returning `true` | **Impossible in principle** | **Permanently stated** |
+| 22 | **The `observed_effects` scan does not reach a service body** (a consequence of the Q-A decision to scan `handle` only) | Annotate every effect-carrying item and take the transitive closure at build time (a future form). For now, state it with `scope: "handle_only"` and `deferred` | **Stated** (Q-A / 2026-08-15) |
 
 ---
 
-## 原理的に埋まらないもの
+## What cannot be closed in principle
 
-### `Condition::holds` の中身
+### The body of `Condition::holds`
 
 ```rust
 impl Condition<User, UpdateUserRequest> for EmailChanged {
     const NAME: &'static str = "EmailChanged";
     fn holds(user: &User, req: &UpdateUserRequest) -> bool {
-        true    // ← これで条件付きEffectが全件無条件化する
+        true    // ← this makes every conditional effect unconditional
     }
 }
 ```
 
-利用者が書いたbool値を型で検証することはできない。しかも**AI Contextは依然として `"conditional": [...]` と出力するため、メタデータが能動的に嘘をつく**。
+A boolean a user wrote cannot be verified in types. And because **the AI Context
+still emits `"conditional": [...]`, the metadata actively lies.**
 
-対処:
+The response:
 
-- AI Contextに `condition_verified: false` を必ず出力する
-- `Condition` の実装は純関数であることを規約化する（外部I/O・時刻・乱数を禁止）
-- 条件をnamed typeとして1箇所に定義させることで、レビュー・テストの対象として特定可能にする
+- Always emit `condition_verified: false` in the AI Context
+- Make it a convention that a `Condition` implementation is a pure function (no
+  external I/O, clock or randomness)
+- Require a condition to be defined once as a named type, so it can be identified
+  as a subject for review and testing
 
-### 行レベル権限（IDOR）
+### Row-level permissions (IDOR)
 
-`Mutate<User, user::Email>` は「User型のemail列を書ける」であって「**この** Userを書ける」ではない。
+`Mutate<User, user::Email>` means "the email column of the User type may be
+written", not "**this** user may be written".
 
 ```rust,ignore   // fragment, not a complete item
 let victim = ctx.users().find(attacker_supplied_id).await?;
-ctx.users().set_email(&mut victim, attacker_email)?;   // Capabilityは満たされる
+ctx.users().set_email(&mut victim, attacker_email)?;   // the capability is satisfied
 ```
 
-1行の更新と全行の更新がContract上で同じに見える。**認可は必ず別途必要**であり、Capabilityは認可の代替ではない。[`capability-system.md`](./capability-system.md) の「静的Capabilityと動的Authorizationの区別」を参照。
+Updating one row and updating every row look identical in the contract.
+**Authorisation is always required separately**, and a capability is not a
+substitute for it. See [`capability-system.md`](./capability-system.md), "a
+capability is not authorisation".
 
 ### `*user = other_user`
 
-Domainを不透明化しても、`&mut User` を持っていれば全体置換は可能。
+Even with an opaque domain, holding a `&mut User` permits wholesale replacement.
 
 ```rust,ignore   // fragment, not a complete item
 let mut a = ctx.users().find(id_a).await?;
 let b = ctx.users().find(id_b).await?;
-*a = b;    // 型検査を通る
+*a = b;    // it type-checks
 ```
 
-`find` の戻り値をID型でブランド化すれば防げるが、ergonomicsのコストが大きい。現段階では明示に留める。
+Branding `find`'s return value by ID type would prevent it, but the ergonomic cost
+is large. For now it is only stated.
 
 ---
 
-## Contract緩和バイアス — 型では解決しない問題
+## Contract-relaxation bias — a problem types do not solve
 
-AIはコンパイルエラーに対して、**実装を直すより Contract を1行広げる方を選ぶ**。これは経済的に合理的な選択であり、型では防げない。
+Faced with a compile error, an AI **widens the contract by one line rather than
+fixing the implementation.** That is an economically rational choice, and types
+cannot prevent it.
 
 ```text
 error: undeclared mutation `User::status`
   help: add `User::status` to the contract, or remove this call
-        ↑ AIはこちらを選ぶ                ↑ 本来はこちらが正しい場合も多い
+        ↑ the AI picks this one           ↑ often the correct one
 ```
 
-[`diagnostics.md`](./diagnostics.md) の「helpは必ず2方向を示す」は文言レベルの対策であり、選択そのものは制約できない。
+[`diagnostics.md`](./diagnostics.md)'s "a help always shows both directions" is a
+wording-level countermeasure and cannot constrain the choice itself.
 
-対処（型の外）:
+The response, outside the types:
 
-| 手段 | 内容 |
+| Means | Contents |
 |---|---|
-| CI | `mutates` / `reads` / `domains` を**広げる**差分を検出し、別ラベル・追加レビュー必須にする |
-| コミット規約 | Contractを緩める変更は理由を1行以上明記する |
-| AI向け指示 | Contract緩和は最後の手段であることをCLAUDE.md相当に明記 |
+| CI | Detect diffs that **widen** `mutates` / `reads` / `domains`, and require a separate label and extra review |
+| Commit convention | A change that relaxes a contract states the reason in at least one line |
+| Instructions for AI | State in the equivalent of a CLAUDE.md that relaxing a contract is a last resort |
 
-**これは型システムの問題ではなく運用の問題である**ことを認識し、型で解決しようとしない。
+Recognise that **this is an operational problem, not a type-system one**, and do
+not try to solve it with types.
 
 ---
 
-## AI Contextへの出力
+## Emitting it in the AI Context
 
-未検査境界は**必ず**AI Contextに出力する。
+An unchecked boundary is **always** emitted in the AI Context.
 
 ```json
 {
@@ -250,93 +372,109 @@ error: undeclared mutation `User::status`
   "unverified_boundaries": [
     {
       "kind": "condition_body",
-      "detail": "EmailChanged::holds は型検証不可",
+      "detail": "EmailChanged::holds cannot be verified in types",
       "location": "src/conditions/user.rs:12",
       "permanent": true
     },
     {
       "kind": "middleware",
-      "detail": "適用される middleware の Effect は未宣言",
+      "detail": "the effects of the applied middleware are undeclared",
       "permanent": false
     },
     {
       "kind": "event_subscriber",
-      "detail": "UserUpdated の購読側 Effect は未検査",
+      "detail": "effects on the subscriber side of UserUpdated are unchecked",
       "permanent": false
     },
     {
       "kind": "repository_impl",
-      "detail": "Repository 実装内部の SQL は未検査",
+      "detail": "SQL inside a repository implementation is unchecked",
       "location": "src/repositories/user.rs",
       "permanent": false
     },
     {
       "kind": "row_scope",
-      "detail": "行レベル権限は型検査の対象外。認可は別途必要",
+      "detail": "row-level permissions are outside the type check; authorisation is separate",
       "permanent": true
     },
     {
       "kind": "domain_swap",
-      "detail": "*user = other_user は &mut D があれば成立し、閉じられない（path 2）",
+      "detail": "*user = other_user holds given a &mut D and cannot be closed (path 2)",
       "permanent": true
     },
     {
       "kind": "domain_repr",
-      "detail": "Domain の Repr は同一クレートのどこからでも到達可能。Capability 無しに構築・全フィールド読出しができる（path 21）",
+      "detail": "a domain's Repr is reachable from anywhere in the same crate; it can be constructed and every field read without a capability (path 21)",
       "location": "src/domain/user.rs",
       "permanent": false
     },
     {
       "kind": "malformed_set",
-      "detail": "壊れた effect 集合を capability 検査に通せる（path 14f）。要素が素のローカル型のときに限る",
+      "detail": "a malformed effect set can be passed through the capability check (path 14f), limited to bare local types as elements",
       "permanent": false
     },
     {
       "kind": "service_body",
-      "detail": "observed_effects の走査は handle の中だけ。Service 本体で起きる Effect は下界に現れない（path 22）",
+      "detail": "the observed_effects scan covers only the inside of handle; effects in a service body do not appear in the lower bound (path 22)",
       "permanent": false
     }
   ]
 }
 ```
 
-`permanent: true` は原理的に埋まらないもの、`false` は将来Contractを拡大すれば消えるもの。
+`permanent: true` marks what cannot be closed in principle; `false` marks what
+disappears once the contract is widened.
 
-**この出力機構はFirst PoCから実装する。** 後から追加すると、それまでのAI Contextが「嘘をついていた」ことになる。
+**This output mechanism is implemented from the First PoC.** Added later, it would
+mean every AI Context up to that point had been lying.
 
 ---
 
-## 進捗の測り方
+## How progress is measured
 
-Contractを拡大すると `unverified_boundaries` の項目が減る。これがそのまま進捗指標になる。
+Widening the contract reduces the entries in `unverified_boundaries`. That count
+is the progress metric.
 
 ```text
-First PoC:  permanent 3 件 + non-permanent 6 件
-Full PoC:   permanent 3 件 + non-permanent 3 件（middleware / event を対応）
-将来:       permanent 3 件 + non-permanent 0 件
+First PoC:  3 permanent + 6 non-permanent
+Full PoC:   3 permanent + 3 non-permanent (middleware and events handled)
+Later:      3 permanent + 0 non-permanent
 ```
 
-`permanent` が0になることはない。それを隠さないことがこのファイルの目的である。
+`permanent` never reaches zero. Not hiding that is this file's purpose.
 
-> **数え方の定義**（レビューで「数えるたびに違う値になる」と指摘されたので明示する）: **AI Context の `unverified_boundaries` に出る項目と1対1**で数える。permanent 3 = `condition_body`（20）/ `row_scope`（行レベル権限）/ `domain_swap`（2）。non-permanent 6 = `middleware`（16）/ `event_subscriber`（15）/ `repository_impl`（17）/ `domain_repr`（21）/ `malformed_set`（14f）/ `service_body`（22）。
+> **The counting rule** (stated explicitly because a review noted "the number
+> differs every time it is counted"): count **one-to-one with the entries emitted
+> in the AI Context's `unverified_boundaries`.** permanent 3 = `condition_body`
+> (20) / `row_scope` (row-level permissions) / `domain_swap` (2). non-permanent 6 =
+> `middleware` (16) / `event_subscriber` (15) / `repository_impl` (17) /
+> `domain_repr` (21) / `malformed_set` (14f) / `service_body` (22).
 >
-> **数に入らないのは path 18 と 19 の2つで、理由は同じ** — どちらも「後回し」ラベルだけで `kind` 名が決まっておらず、どのサンプルにも現れない。以前この定義は 19 だけを除外して 18 を数えており、**定義が数えるものと出力されるものが食い違っていた**（#43 項目8）。両方を決めること。
+> **What is not counted is paths 18 and 19, for the same reason** — both carry only
+> a "deferred" label with no `kind` name decided, and neither appears in any
+> sample. This definition previously excluded 19 and counted 18, so **what the
+> definition counted and what was emitted disagreed** (#43 item 8). Decide both.
 >
-> この9項目は、本ファイルのサンプルと [`ai-context.md`](./ai-context.md) のサンプルの両方と**集合として一致していなければならない**。3箇所が違う値を持っていたのが、この注記が書き直された理由である。
+> These nine entries must **agree as a set** with both this file's sample and
+> [`ai-context.md`](./ai-context.md)'s. Three places holding different values is
+> why this note was rewritten.
 
 ---
 
-## 「GET は read-only」の正確な範囲
+## The exact scope of "a GET is read-only"
 
-MiddlewareがContractを持たない限り、この保証は**ハンドラスコープに限定される**。
+Unless middleware carries a contract, this guarantee is **confined to the handler
+scope.**
 
 ```rust,ignore   // fragment, not a complete item
-// Auth Middleware が last_login_at を更新する場合
+// if auth middleware updates last_login_at
 GET /users/{id}
-  ハンドラスコープ  : Mutates = () → read-only（真）
-  リクエストスコープ: User.last_login_at が更新される（偽）
+  handler scope : Mutates = () → read-only (true)
+  request scope : User.last_login_at is updated (false)
 ```
 
-`scope_of_readonly_guarantee: "handler_only"` として明示する。Middleware Contractを導入した時点で `"request"` に昇格させる。
+Stated as `scope_of_readonly_guarantee: "handler_only"`, and promoted to
+`"request"` once middleware contracts are introduced.
 
-**保証の範囲を正確に名乗ることは、保証を強くすることと同じくらい重要である。**
+**Naming a guarantee's scope accurately matters as much as making the guarantee
+stronger.**

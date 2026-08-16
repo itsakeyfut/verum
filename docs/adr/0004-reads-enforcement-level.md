@@ -17,7 +17,7 @@ enforcement-level: metadata_only
 Two statements in the specs are each defensible and cannot both be acted on:
 
 * **The derive emits capability-requiring getters.**
-  `docs/specs/mutation-contract.md` lists "2. Capability 要求付き getter" among
+  `docs/specs/mutation-contract.md` lists "2. Capability-checked getters" among
   what `#[derive(Domain)]` generates, and `docs/specs/read-contract.md` says
   Domain opacity plus those getters already restricts reading undeclared fields.
 * **`reads` is metadata only.** `docs/specs/read-contract.md:141` and
@@ -31,7 +31,7 @@ getter description reads as a guarantee that is not there.
 Nobody has measured which. That is #15 / T-M1-03: *can capability-checked getters
 enforce `reads` without a `Projection` type?*
 
-The cost of guessing is not symmetric. `.claude/commands/bump.md` treats a change
+The cost of guessing is not symmetric. The versioning policy treats a change
 of enforcement level as **breaking**: promoting `reads` from `metadata_only` to
 `upper_bound_checked` makes previously-compiling code fail. Writing the
 optimistic answer into the specs now would either bake in a promise the
@@ -113,6 +113,5 @@ Context is the only mechanically checkable part, and
 ## More Information
 
 * #15 / T-M1-03 — the spike that settles this
-* `docs/specs/read-contract.md` §PoCでの扱い — where the level is emitted
+* `docs/specs/read-contract.md` §Treatment in the PoC — where the level is emitted
 * `docs/specs/ai-context.md` — the sample the level appears in
-* `.claude/commands/bump.md` — why the level is a breaking change

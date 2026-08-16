@@ -1,14 +1,18 @@
-# Conditional Effects
+# Conditional effects
 
-条件付きで発生するEffectの表現。設計上もっとも難しい領域。
+Expressing an effect that happens under a condition. The hardest area of the
+design.
 
-関連: [`handler-rules.md`](./handler-rules.md) / [`mutation-contract.md`](./mutation-contract.md) / [`rust-type-model.md`](./rust-type-model.md) / [`unverified-boundaries.md`](./unverified-boundaries.md)
+Related: [`handler-rules.md`](./handler-rules.md),
+[`mutation-contract.md`](./mutation-contract.md),
+[`rust-type-model.md`](./rust-type-model.md),
+[`unverified-boundaries.md`](./unverified-boundaries.md).
 
 ---
 
-## 課題
+## The problem
 
-単純なEffect宣言だけでは不十分。
+A plain effect declaration is not enough.
 
 ```text
 if email_changed:
@@ -22,32 +26,37 @@ if status == suspended:
 
 ---
 
-## 判明した制約
+## The constraint that emerged
 
-**Rustの型システムでは `if email_changed then Emit<X>` を直接表現できない。** 完全なdependent typeは不可能。
+**Rust's type system cannot express `if email_changed then Emit<X>` directly.**
+Full dependent types are impossible.
 
 ```text
-型      → 「どのスコープで何が起こり得るか」を保証
-条件    → runtime witness + Metadata
+types      → guarantee "what may happen in which scope"
+conditions → a runtime witness plus metadata
 ```
 
-型が保証するのは「**このスコープの外では絶対に起きない**」こと。「この条件のときだけ起きる」ことは型では保証しない（条件の中身は検証不能）。
+What the types guarantee is that it **never happens outside this scope.** They do
+not guarantee "it happens only under this condition" — the body of a condition is
+unverifiable.
 
 ---
 
-## 決定: 宣言場所の規則
+## Decision: the rule for where things are declared
 
-> Q-C実験で「conditional mutationをwhen内に書くのかトップレベルに書くのか、コード例から逆算する必要があった」と指摘された箇所。仕様として確定させる。
+> The point the Q-C experiment flagged: "whether a conditional mutation is written
+> inside `when` or at the top level had to be reverse-engineered from the code
+> examples". Fixed here as specification.
 
-### 規則
+### The rule
 
 ```text
-トップレベルの mutates / emits / calls  → 無条件に起こり得る
-when(C) 内の mutates / emits / calls    → その条件下でのみ起こり得る
-同一要素を両方に書くことは禁止（macro が弾く）
+mutates / emits / calls at the top level  → may happen unconditionally
+mutates / emits / calls inside when(C)    → may happen only under that condition
+Writing the same element in both is forbidden (the macro rejects it)
 ```
 
-### 宣言例
+### An example declaration
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[endpoint(PUT "/users/{id}")]
@@ -57,13 +66,13 @@ when(C) 内の mutates / emits / calls    → その条件下でのみ起こり�
     response  = UserView,
 
     reads     = [User::id],
-    mutates   = [User::name],              // 無条件に変更する
+    mutates   = [User::name],              // changed unconditionally
     forbidden = [User::password_hash],
     creates   = [AuditLog],
     emits     = [UserUpdated],
 
     when(EmailChanged) => {
-        mutates = [User::email],           // この条件下でのみ変更する
+        mutates = [User::email],           // changed only under this condition
         emits   = [EmailVerificationRequested],
         calls   = [EmailService],
     },
@@ -71,7 +80,7 @@ when(C) 内の mutates / emits / calls    → その条件下でのみ起こり�
 pub struct UpdateUser;
 ```
 
-### 型への展開
+### The expansion into types
 
 ```rust
 type Mutates = (Mutate<User, user::Name>, ());
@@ -87,29 +96,32 @@ type Conditional = (
 );
 ```
 
-**カテゴリ別に分割することは必須である。** 混在させると `Conditional` からMutateだけを取り出す型レベル `Filter` が必要になり、catch-all implが必ず衝突する（[`rust-type-model.md`](./rust-type-model.md)）。
+**Splitting by category is mandatory.** Mixed together, a type-level `Filter`
+would be needed to extract only the mutations from `Conditional`, and the
+catch-all impl always collides
+([`rust-type-model.md`](./rust-type-model.md)).
 
-### 実装での帰結
+### The consequence in an implementation
 
 ```rust,ignore   // fragment, not a complete item
-ctx.users().set_name(&mut user, req.name)?;      // ✅ トップレベルに宣言済み
+ctx.users().set_name(&mut user, req.name)?;      // ✅ declared at the top level
 ```
 
 ```rust,compile_fail
-ctx.users().set_email(&mut user, req.email)?;    // ❌ 型エラー
-//          ^^^^^^^^^ 外側の ctx は Mutate<User, user::Email> を持たない
+ctx.users().set_email(&mut user, req.email)?;    // ❌ type error
+//          ^^^^^^^^^ the outer ctx does not hold Mutate<User, user::Email>
 
 ctx.when::<EmailChanged, _>(&mut user, &req, async |ctx, user, req| {
 ```
 
 ```rust,ignore   // fragment, not a complete item
-    ctx.users().set_email(user, req.email.clone())?;   // ✅ 内側 ctx のみ
+    ctx.users().set_email(user, req.email.clone())?;   // ✅ the inner ctx only
     ctx.events().emit(EmailVerificationRequested { .. })?;
     Ok(())
 }).await?;
 ```
 
-`when` スコープ内のContextは以下の型を持つ。
+The context inside a `when` scope has these types.
 
 ```text
 Mutates = <E::Mutates as Append<CondMutates>>::Out
@@ -117,39 +129,67 @@ Emits   = <E::Emits   as Append<CondEmits>>::Out
 Calls   = <E::Calls   as Append<CondCalls>>::Out
 ```
 
-`Append` はcons listの連結で、coherence問題なく実装できる（T-M0-09 で実装・検証済み）。`Lookup` で `E::Conditional` から該当する `When<C, ..>` を引く。
+`Append` is cons-list concatenation and is implementable without a coherence
+problem (implemented and verified in T-M0-09). `Lookup` retrieves the matching
+`When<C, ..>` from `E::Conditional`.
 
-> **訂正（T-M0-09）**: 旧版は「どちらもindexパラメータ版が必要」と書いていたが、**`Append` に index パラメータは不要**である。`Append` の2つの impl は `()` と `(H, T)` を対象とし構造的に disjoint なので、そもそも重複しない。index が必要なのは `Has` / `Lookup` のように **impl が2つとも `(_, _)` を対象とする**場合だけである。[`rust-type-model.md`](./rust-type-model.md) の表は当初から `Append<A, B>`（index なし）/ `Lookup<Set, Key, Idx>`（index あり）と書き分けており、**2つの spec が矛盾していた。コンパイラは後者に一致した。**
+> **Correction (T-M0-09)**: an earlier version said "both need an index-parameter
+> version", but **`Append` does not need an index parameter.** Its two impls target
+> `()` and `(H, T)` and are structurally disjoint, so they never overlap. An index
+> is needed only where **both impls target `(_, _)`**, as with `Has` and `Lookup`.
+> [`rust-type-model.md`](./rust-type-model.md)'s table had written them
+> differently from the start — `Append<A, B>` (no index) and
+> `Lookup<Set, Key, Idx>` (with one) — so **the two specs contradicted each other.
+> The compiler agreed with the latter.**
 
-`Lookup` の map は **`(鍵, 値)` ペアの cons list** である（`((C, When<C, ..>), rest)`）。エントリ自身が鍵を宣言する `Keyed` 方式ではない — `typelevel` は依存の最下層で `When` を知ってはならないためである（[`../rules/design.md`](../rules/design.md) §2）。鍵が2回現れる冗長性は derive が吸収する。`Keyed` の追加は非破壊なので、必要になれば後から足せる。
+`Lookup`'s map is **a cons list of `(key, value)` pairs**
+(`((C, When<C, ..>), rest)`). It is not the `Keyed` approach in which an entry
+declares its own key, because `typelevel` is the bottom of the dependency stack
+and must not know about `When` ([`../rules/design.md`](../rules/design.md) §2).
+The redundancy of the key appearing twice is absorbed by the derive. Adding
+`Keyed` is non-breaking, so it can be added later if needed.
 
-**`Append` は dedup できない。** 「要素が他方に**無い**」で分岐する必要があり、それには全域の Bool 値 membership 判定が要る — catch-all impl が衝突し（E0119）、index witness の置き場も無い（E0207）。`Has` が成立するのは*部分*関係だからである。**`Subset` が禁止だからではない**（`Subset` は部分述語としては書けるし、禁止理由はコスト）— T-M0-09 で訂正。したがって `emits = [X]` と `when(C) => { emits = [X] }` の合成は `(X, (X, ()))` を黙って作り、E0283 は離れた `Has` の地点で出る。**dedup は無条件に macro の責務**であり、`compile_fail/append_duplicate_breaks_membership.rs` がこの経路を固定している。
+**`Append` cannot dedup.** It would have to branch on an element being **absent**
+from the other side, which needs a total boolean membership decision — the
+catch-all impl collides (E0119) and there is nowhere to put the index witness
+(E0207). `Has` works because it is a *partial* relation. **It is not because
+`Subset` is banned** (`Subset` can be written as a partial predicate; the reason
+it is banned is cost) — corrected in T-M0-09. So composing `emits = [X]` with
+`when(C) => { emits = [X] }` silently produces `(X, (X, ()))`, and the E0283
+surfaces at a distant `Has`. **Dedup is unconditionally the macro's
+responsibility**, and
+`compile_fail/append_duplicate_breaks_membership.rs` pins that route.
 
-### なぜトップレベルに全部書く案を採らなかったか
+### Why "declare everything at the top level" was not chosen
 
 ```rust,ignore   // fragment, not a complete item
-// 却下した案
-mutates = [User::name, User::email],   // email も無条件扱い
+// the rejected option
+mutates = [User::name, User::email],   // email treated as unconditional too
 when(EmailChanged) => { emits = [..] },
 ```
 
-この形だと `set_email` を `when` の外で無条件に呼べてしまう。「emailは条件下でのみ変わる」という**Verumの中核主張（agenda §5, §6）がMutationについて実現しない**。
+In that shape, `set_email` can be called unconditionally outside the `when`.
+**Verum's core claim — that email changes only under a condition — would not hold
+for mutations.**
 
-型がシンプルになる（`CondMutates` 不要）という利点はあるが、`Append` はEmit/Callのために既に必要なので追加コストはほぼない。
+The types get simpler (no `CondMutates`), but `Append` is already needed for
+emits and calls, so the additional cost is close to nothing.
 
-### なぜ重複を禁止するか
+### Why duplicates are forbidden
 
-理由が2つある。
+Two reasons.
 
-1. **意味論の矛盾** — 同じFieldが「無条件でも条件付きでもある」状態は定義できない
-2. **技術的な破綻** — Append後に重複が生じると `Has` のindex推論が壊れ、E0283（型注釈が必要）という無関係なエラーになる
+1. **A semantic contradiction** — a field that is "both unconditional and
+   conditional" has no definition.
+2. **A technical breakdown** — a duplicate surviving `Append` breaks `Has`'s index
+   inference, producing an unrelated E0283 (type annotations needed).
 
 ```text
 error[E0283]: type annotations needed
 note: multiple `impl`s satisfying `(Mn, (Mn, ())): Has<Mn, _>` found
 ```
 
-macro段階で弾く（[`diagnostics.md`](./diagnostics.md) 層1）。
+The macro rejects it ([`diagnostics.md`](./diagnostics.md), layer 1).
 
 ```text
 error: `User::email` is declared both unconditionally and under `when(EmailChanged)`
@@ -164,25 +204,31 @@ error: `User::email` is declared both unconditionally and under `when(EmailChang
    = help: remove one of them — a field is either unconditional or conditional
 ```
 
-### 実効集合（上界）
+### The effective set (the upper bound)
 
-「このEndpointが変更しうるField全体」は以下になる。
+"Every field this endpoint may change" is:
 
 ```text
-effective_mutates = mutates ∪ (全 when の CondMutates)
+effective_mutates = mutates ∪ (the CondMutates of every when)
 ```
 
-ソース上は2箇所に分かれるため、**AI Contextには合算した完全形を出力する**。これは [`effect-system.md`](./effect-system.md) の「書く側は差分、読む側は完全形」と同じ構造である。
+The source splits it across two places, so **the AI Context emits the combined,
+complete form.** This is the same structure as
+[`effect-system.md`](./effect-system.md)'s "a delta to write, the complete form to
+read".
 
 ---
 
-## GET の read-only 保証との関係
+## Relationship to a GET's read-only guarantee
 
-`Mutates = ()` だけでは不十分になる。`Conditional` 内の `CondMutates` も空でなければならない。
+`Mutates = ()` alone is not enough: the `CondMutates` inside `Conditional` must be
+empty too.
 
-型で検査するには `Conditional` に対する再帰的な畳み込みが必要で、negative reasoningに近づく（[`rust-type-model.md`](./rust-type-model.md) が避けると定めた領域）。
+Checking that in types needs a recursive fold over `Conditional`, which
+approaches negative reasoning — the area
+[`rust-type-model.md`](./rust-type-model.md) rules out.
 
-**macroで弾く。**
+**The macro rejects it.**
 
 ```text
 error: GET endpoint `GetUser` cannot declare mutations
@@ -195,11 +241,12 @@ error: GET endpoint `GetUser` cannot declare mutations
    = help: use PUT / PATCH / POST / DELETE
 ```
 
-`creates` / `deletes` も同様。層1で弾けるものは層1で弾く（[`diagnostics.md`](./diagnostics.md)）。
+The same for `creates` and `deletes`. Catch at layer 1 whatever layer 1 can catch
+([`diagnostics.md`](./diagnostics.md)).
 
 ---
 
-## 実装シグネチャ
+## The implementation signature
 
 ```rust,ignore   // fragment, not a complete item
 pub async fn when<C, F>(&self, u: &mut E::Domain, r: &E::Request, f: F) -> Result<()>
@@ -208,56 +255,65 @@ where
     F: AsyncFnOnce(Ctx<'_, WhenScope<E, C, I>>, &mut E::Domain, &E::Request) -> Result<()>;
 ```
 
-- `user` / `req` は**キャプチャさせず引数として貸す**。`&user` を渡しつつ `async move` でキャプチャする形は借用エラーになる（実コンパイルで確認済み: E0382 / E0505 ×2 / E0382）
-- **Rust 2024 edition の async closure（`AsyncFnOnce`, 1.85+）が必須。** `FnOnce(..) -> Fut` 方式は借用を跨げない
-- **戻り型は `Result<()>` に固定する。** そうしないと `Ok(ctx)` で昇格されたContextをスコープ外へ持ち出せる
+- `user` and `req` are **lent as arguments, not captured.** Passing `&user` while
+  capturing it in an `async move` is a borrow error (confirmed by compiling:
+  E0382 / E0505 ×2 / E0382)
+- **Rust 2024 edition async closures (`AsyncFnOnce`, 1.85+) are required.** The
+  `FnOnce(..) -> Fut` form cannot carry the borrow across
+- **The return type is fixed to `Result<()>`.** Otherwise `Ok(ctx)` carries the
+  elevated context out of the scope
 
 ```rust,compile_fail
 let elevated = ctx.when::<C, _>(.., async |ctx, ..| Ok(ctx)).await?;
-//                                                   ^^^^^^^ 型エラー
+//                                                   ^^^^^^^ type error
 ```
 
 ---
 
-## 得られる保証
+## What is guaranteed
 
-| 保証されること | 仕組み |
+| Guarantee | Mechanism |
 |---|---|
-| 条件付きMutation / Emit / Call がスコープ外で発火しない | 外側の`ctx`がCapabilityを持たない → 型エラー |
-| 宣言していない条件付きEffectは発火できない | `Conditional`に無い → `Lookup`が失敗する |
-| 昇格Contextをスコープ外へ持ち出せない | クロージャ戻り型が `Result<()>` に固定されている |
-| 条件とEffectの対応がコード上で視認できる | ブロック構造として視覚化される |
+| A conditional mutation / emit / call does not fire outside the scope | The outer `ctx` does not hold the capability → type error |
+| An undeclared conditional effect cannot fire | It is not in `Conditional` → `Lookup` fails |
+| The elevated context cannot be carried out of the scope | The closure's return type is fixed to `Result<()>` |
+| The correspondence between condition and effect is visible in the code | It is visualised as a block structure |
 
 ---
 
-## 保証されないこと — 原理的な限界
+## What is not guaranteed — the limit in principle
 
-**`Condition::holds` の中身は型で検証できない。**
+**The body of `Condition::holds` cannot be verified in types.**
 
 ```rust
 impl Condition<User, UpdateUserRequest> for EmailChanged {
     const NAME: &'static str = "EmailChanged";
     fn holds(user: &User, req: &UpdateUserRequest) -> bool {
-        true      // ← これで条件付きEffectが全件無条件化する
+        true      // ← this makes every conditional effect unconditional
     }
 }
 ```
 
-`when` は「条件がEffectを制限する」機構ではなく、**「利用者が書いた未検証のboolがCapabilityを解錠する」機構**である。
+`when` is not a mechanism by which a condition restricts effects; it is **a
+mechanism by which an unverified boolean the user wrote unlocks a capability.**
 
-さらに、**AI Contextが `"conditional": [...]` と出力し続けるためメタデータが能動的に嘘をつく**。
+And because the AI Context keeps emitting `"conditional": [...]`, **the metadata
+actively lies.**
 
-### 対処
+### What is done about it
 
-- AI Contextに `condition_verified: false` を**必ず**出力する（[`unverified-boundaries.md`](./unverified-boundaries.md) #20）
-- `Condition` の実装は**純関数**であることを規約化する（外部I/O・時刻・乱数の禁止）
-- 条件をnamed typeとして1箇所に定義させ、レビュー・テストの対象として特定可能にする
+- **Always** emit `condition_verified: false` in the AI Context
+  ([`unverified-boundaries.md`](./unverified-boundaries.md) #20)
+- Make it a convention that a `Condition` implementation is a **pure function** (no
+  external I/O, clock or randomness)
+- Require a condition to be defined once as a named type, so it can be identified
+  as a subject for review and testing
 
-**「型で保証されている」と表現してはならない。**
+**It must not be described as "guaranteed by types".**
 
 ---
 
-## Condition trait
+## The `Condition` trait
 
 ```rust,ignore   // needs a crate or a verum-private module this harness does not carry
 pub trait Condition<Domain, Request>: derive_facing::SealedCondition<Domain, Request> {
@@ -266,18 +322,23 @@ pub trait Condition<Domain, Request>: derive_facing::SealedCondition<Domain, Req
 }
 ```
 
-### 同期・純関数であることの限界
+### The limits of being synchronous and pure
 
-以下は表現できない。
+These cannot be expressed:
 
-- **Feature flag / A-Bテスト** — 外部サービスへの非同期問い合わせが必要
-- **時刻・ロールアウト率に依存する条件** — Domain / Requestから到達できない
+- **Feature flags / A-B tests** — they need an asynchronous query to an external
+  service
+- **Conditions depending on the clock or a rollout percentage** — unreachable from
+  the domain or the request
 
-`async fn holds(ctx: &Ctx<..>, ..)` への拡張はCapability境界内での外部I/Oを許すことになり、Effect Systemとの整合を再検討する必要がある。[`research-questions.md`](./research-questions.md) に記録。
+Extending to `async fn holds(ctx: &Ctx<..>, ..)` would permit external I/O inside
+the capability boundary, and its consistency with the effect system would have to
+be reconsidered. Recorded in
+[`research-questions.md`](./research-questions.md).
 
 ---
 
-## 条件の合成（未決定）
+## Composing conditions (undecided)
 
 ```text
 when(EmailChanged and NotSuspended)
@@ -285,21 +346,23 @@ when(EmailChanged or PhoneChanged)
 when(not Verified)
 ```
 
-- `and` → 両方の条件付きEffectの和集合か、個別宣言か
-- `or` → どちらが成立したか実行時に分からないため、和集合を許可するしかない
-- `not` → negative reasoningの問題に触れる可能性
+- `and` → the union of both conditions' effects, or separate declarations?
+- `or` → which one held is unknown at run time, so only the union can be permitted
+- `not` → may run into the negative-reasoning problem
 
-First PoCでは単一条件のみ扱う。
-
----
-
-## ネストした条件
-
-構造的には可能だが、Contract側の宣言形式が未定。読みやすさが急速に低下するため、**ネストは2段までに制限する**ことを検討する。それ以上は条件の合成を使う。
+The First PoC handles single conditions only.
 
 ---
 
-## AI Context出力
+## Nested conditions
+
+Structurally possible, but the declaration form on the contract side is
+undecided. Readability degrades fast, so **limiting nesting to two levels** is
+under consideration. Beyond that, compose conditions.
+
+---
+
+## AI Context output
 
 ```json
 {
@@ -324,18 +387,19 @@ First PoCでは単一条件のみ扱う。
 }
 ```
 
-AIが以下の3つを区別できる必要がある。
+An AI has to be able to distinguish three things:
 
-1. 常に起きること（`unconditional`）
-2. 条件次第で起きること（`conditional`）
-3. 条件自体が信頼できないこと（`condition_verified: false`）
+1. What always happens (`unconditional`)
+2. What happens depending on a condition (`conditional`)
+3. That the condition itself is not trustworthy (`condition_verified: false`)
 
 ---
 
-## 優先度
+## Priority
 
-First PoCでは `when` を実装しない。ただし**宣言場所の規則はmacroに最初から実装する**（後から変えると全Contractの書き換えになる）。
+`when` is not implemented in the First PoC. But **the rule for where things are
+declared is implemented in the macro from the start** — changing it later means
+rewriting every contract.
 
-`unverified_boundaries` への `condition_body` 出力もFirst PoCから含める（`when` 未実装の段階では該当項目が空になるだけ）。
-
-[`../roadmap/roadmap.md`](../roadmap/roadmap.md) を参照。
+Emitting `condition_body` into `unverified_boundaries` is included from the First
+PoC too (while `when` is unimplemented, the entry is simply empty).

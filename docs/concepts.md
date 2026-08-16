@@ -1,342 +1,389 @@
-# Verum — Concepts
+# Verum — concepts
 
-プロジェクトの思想・ビジョン・設計原則。
+The project's philosophy, vision and design principles.
 
-技術仕様は [`docs/specs/`](./specs/README.md) を参照。
+For the technical specifications see [`docs/specs/`](./specs/README.md); the
+reasoning behind each decision is in [`docs/adr/`](./adr/README.md).
 
 ---
 
-## 1. Project Vision
+## 1. Project vision
 
-AIがWebアプリケーションを実装することを前提に、**Endpointの意味論・可変性・副作用を強力な型システムで表現し、AIが実装内部を大量に読まなくても正確な処理契約を理解できるWebフレームワーク**を作る。
+Assuming an AI implements the web application, build **a web framework in which
+an endpoint's semantics, mutability and side effects are expressed in a strong
+type system, so that an AI can understand the exact contract without reading
+large amounts of the implementation.**
 
-単なる「AIが読みやすいWebフレームワーク」ではなく、
+Not merely "a web framework an AI finds easy to read", but:
 
-> **AIが正しいWebアーキテクチャを生成し、契約から逸脱した実装をコンパイラ/静的解析で検出・拒否できるWebフレームワーク**
-
-を目指す。
+> **A web framework in which an AI produces correct web architecture, and in
+> which an implementation deviating from the contract is detected and rejected by
+> the compiler or by static analysis.**
 
 ### Fundamental philosophy
 
-- AIに自由にコードを書かせるのではなく、**正しい設計空間を狭くする**
-- ConventionだけでAIを誘導するのではなく、**型付き契約でAIの実装を拘束する**
-- コメント・README・命名だけに意味を依存しない
-- Endpointのメタ情報そのものを**型システムで保証**する
-- 「コードを読むことでしか分からない情報」を、可能な限り型付きメタ情報として明示する
-- 型システムを「AIへの情報圧縮装置」として利用する
+- Rather than letting an AI write code freely, **narrow the space of correct
+  designs**
+- Rather than guiding an AI by convention alone, **constrain its implementation
+  with a typed contract**
+- Do not let meaning rest on comments, READMEs and naming
+- **Guarantee an endpoint's metadata itself in the type system**
+- State as typed metadata, as far as possible, what would otherwise only be
+  learnable by reading the code
+- Use the type system as **an information-compression device aimed at an AI**
 
 ---
 
-## 2. Core Philosophy
+## 2. Core philosophy
 
-このFrameworkを一文で表現すると:
+In one sentence:
 
-> **AIがコードベース全体を探索しなくてもEndpointの意味を理解でき、自由に実装できる一方で、意図から逸脱した実装は型システム・Effect System・Capability System・Architecture Contractによって許さない、高性能なAI-first Web Framework。**
+> **A high-performance AI-first web framework in which an AI can understand an
+> endpoint's meaning without exploring the whole codebase, and in which it is free
+> to implement — while implementations that deviate from the intent are refused by
+> the type system, the effect system, the capability system and the architecture
+> contract.**
 
-別の短い表現:
+More briefly:
 
 > **Freedom without chaos, semantics without comments.**
 
-究極的には:
+And ultimately:
 
-> **「AIにコードを書かせる」のではなく、「AIが正しいコードしか書きにくいWebアプリケーションの世界を作る」。**
-
----
-
-## 3. Design Principles
-
-> 旧 §15 Design Principles と §50 Updated Core Principles を統合したもの。
-
-### AI as Primary Developer
-
-1. **AI First**
-   - AIをPrimary Developerとして設計する。
-
-2. **AI Context Is a First-class Artifact**
-   - AIが読むためのSemantic ContextをFrameworkの第一級成果物として扱う。
-
-3. **Token-efficient Context**
-   - AIに必要な意味論を少ないTokenで提供する。
-
-### Contract over Convention
-
-4. **Convention over Configuration**
-   - Railsから継承する。
-
-5. **Contract over Convention**
-   - Conventionだけでなく型付きContractにする。
-
-6. **Semantics over Syntax**
-   - HTTP Methodや関数名だけでなく、Endpointの意味を表現する。
-
-7. **Semantic Endpoint**
-   - EndpointはHTTP routeだけではなく、Domain / Effects / Mutation / Capabilityを表現する。
-
-### Types Are the Source of Truth
-
-8. **Types Are Authoritative**
-   - コメントではなく型・契約を信頼する。
-
-9. **Metadata Is Executable Truth**
-   - Semantic Metadataは単なるDocumentationではなく、実装を拘束する契約。
-
-10. **Comments Are Non-authoritative**
-    - コメントは補助情報。仕様のSource of Truthではない。
-
-11. **Comments Are Not Contracts**
-    - コメントがなくてもAI・人間が迷わないことを目標とする。
-
-12. **Single Source of Truth**
-    - AI Context / Documentation / OpenAPI / IDE情報を同じContractから生成する。
-
-13. **Self-describing Codebase**
-    - コードベース自身が型付き意味論を持つ。
-
-14. **Contract Must Be Trustworthy**
-    - AIに見せるMetadataと実装の乖離を静的に検出する。
-
-### Effects and Capabilities
-
-15. **Explicit Effects**
-    - Effectを隠さない。
-
-16. **Fine-grained Effects**
-    - `IO`のような粗いEffectではなく、AIが判断できる粒度で表現する。
-
-17. **Capability *and* Permission Checks**
-    - Capabilityは**Endpointの能力上界**であり、呼び出し主体の権限とは別概念。
-    - **認可（Authorization）は必ず別途必要。** Capabilityは認可の代替ではない。
-    - 「このEndpointは何ができるか」（コンパイル時）と「この主体は何をしてよいか」（実行時）を混同しない。詳細は [`specs/capability-system.md`](./specs/capability-system.md)。
-
-18. **Capability-based Safety**
-    - 「使ってはいけない」と説明するのではなく、「呼び出すとコンパイルが通らない」状態を型で作る。
-    - ただし**型検査が届かない範囲が存在する**。すべて [`specs/unverified-boundaries.md`](./specs/unverified-boundaries.md) に列挙し、AI Contextに出力する。
-
-### Freedom and Performance
-
-19. **Freedom Without Chaos**
-    - Middlewareや低レイヤーへの自由を奪わない。
-
-20. **Roads to Low-level**
-    - 低レイヤーにも型付きの道を用意する。
-
-21. **Escape Hatch**
-    - 必要ならRaw HTTP / Network / Runtimeへ降りられる。80〜90%程度は強いRailに乗せつつ、特殊ケースには低レベルAPIを提供する。ただしEscape HatchはAI/IDEに明示する。
-
-22. **Compile-time First**
-    - Semantic Contractは可能な限りCompile Timeで検証する。
-
-23. **Runtime Lean**
-    - AI向けの豊富なMetadataをRuntime Overheadにしない。
-
-24. **High Performance**
-    - Axum級の性能を目標とし、可能ならActix Web級も研究する。
+> **Not "have an AI write the code", but "build a world of web applications in
+> which it is hard for an AI to write anything but correct code".**
 
 ---
 
-## 4. Prior Art / Existing Frameworks
+## 3. Design principles
+
+> A consolidation of the old §15 Design Principles and §50 Updated Core
+> Principles.
+
+### AI as primary developer
+
+1. **AI first**
+   - Design with the AI as the primary developer.
+
+2. **AI Context is a first-class artefact**
+   - Treat the semantic context an AI reads as a first-class artefact of the
+     framework.
+
+3. **Token-efficient context**
+   - Supply the semantics an AI needs in few tokens.
+
+### Contract over convention
+
+4. **Convention over configuration**
+   - Inherited from Rails.
+
+5. **Contract over convention**
+   - Not convention alone but a typed contract.
+
+6. **Semantics over syntax**
+   - Express an endpoint's meaning, not just its HTTP method and function name.
+
+7. **Semantic endpoint**
+   - An endpoint expresses domain, effects, mutation and capability — not only an
+     HTTP route.
+
+### Types are the source of truth
+
+8. **Types are authoritative**
+   - Trust types and contracts, not comments.
+
+9. **Metadata is executable truth**
+   - Semantic metadata is not documentation but a contract that constrains the
+     implementation.
+
+10. **Comments are non-authoritative**
+    - A comment is supplementary information, not the specification's source of
+      truth.
+
+11. **Comments are not contracts**
+    - The goal is that neither an AI nor a human is left guessing without them.
+
+12. **Single source of truth**
+    - AI Context, documentation, OpenAPI and IDE information are all generated
+      from the same contract.
+
+13. **Self-describing codebase**
+    - The codebase itself carries typed semantics.
+
+14. **A contract must be trustworthy**
+    - Divergence between the metadata shown to an AI and the implementation is
+      detected statically.
+
+### Effects and capabilities
+
+15. **Explicit effects**
+    - Do not hide effects.
+
+16. **Fine-grained effects**
+    - Express them at a granularity an AI can act on, not as one coarse `IO`.
+
+17. **Capability *and* permission checks**
+    - A capability is **an endpoint's upper bound of ability**, a separate concept
+      from the caller's permissions.
+    - **Authorisation is always needed separately.** A capability is not a
+      substitute for it.
+    - Do not conflate "what can this endpoint do" (compile time) with "what is
+      this caller allowed to do" (run time). Detail in
+      [`specs/capability-system.md`](./specs/capability-system.md).
+
+18. **Capability-based safety**
+    - Rather than explaining that something must not be used, create a type-level
+      state in which "calling it does not compile".
+    - But **there is a range the type check does not reach.** It is all listed in
+      [`specs/unverified-boundaries.md`](./specs/unverified-boundaries.md) and
+      emitted in the AI Context.
+
+### Freedom and performance
+
+19. **Freedom without chaos**
+    - Do not take away freedom over middleware and the lower layers.
+
+20. **Roads to low-level**
+    - Provide a typed road to the lower layers too.
+
+21. **Escape hatch**
+    - Drop down to raw HTTP, the network or the runtime when necessary. Keep 80–90%
+      on strong rails while providing a low-level API for special cases — but state
+      the escape hatch to the AI and the IDE.
+
+22. **Compile-time first**
+    - Verify the semantic contract at compile time as far as possible.
+
+23. **Runtime lean**
+    - Do not turn rich metadata aimed at an AI into runtime overhead.
+
+24. **High performance**
+    - Target Axum-class performance, and investigate Actix Web-class where
+      possible.
+
+---
+
+## 4. Prior art
 
 ### Ruby on Rails
 
-RailsのConvention over Configurationは重要な先行事例。
+Rails's convention over configuration is important prior art.
 
 Rails:
-- Conventionによって探索空間を狭める
-- MVC / REST / Active Recordなどの構造を標準化
-- AI Agentにもpredictable architectureが有利
+- Narrows the search space by convention
+- Standardises structures such as MVC, REST and Active Record
+- A predictable architecture also favours an AI agent
 
-本プロジェクトとの差:
-- Rails: **ConventionでAIが推測しやすくする**
-- 本プロジェクト: **Convention + 型付きEffect ContractでAIが正しい実装しか作りにくくする**
+The difference here:
+- Rails: **convention makes it easier for an AI to guess**
+- This project: **convention plus a typed effect contract makes it hard for an AI
+  to produce anything but a correct implementation**
 
 ### Goa
 
 Goa:
 - Design-first
-- Typed Contract
-- DSL
-- Code Generation
+- Typed contract
+- A DSL
+- Code generation
 
-参考にする思想:
-- API契約をコード生成・型に落とす
-- 実装より先にサービスの意味を宣言する
+What is taken from it:
+- Turning an API contract into generated code and types
+- Declaring a service's meaning before implementing it
 
-### Goaとの正確な差分
+### The exact difference from Goa
 
-**「型が権威 vs 外部ファイルが権威」という対立軸は成立しない。** Verumの `#[contract(...)]` の中身もRustの型式ではなくproc macroが解釈するトークン列であり、型はその生成物である。宣言の権威構造はGoaと同型。
+**The framing "types are authoritative vs. an external file is authoritative"
+does not hold.** The contents of Verum's `#[contract(...)]` are not Rust type
+syntax either but a token stream a proc macro interprets, and the types are its
+output. The authority structure of the declaration is the same as Goa's.
 
-実際に成立している差別化は以下の2点。
+Two differentiators do hold:
 
-1. **契約の対象範囲** — API契約だけでなく **State Mutation / External Effect / Conditional Effect / Capability / Architecture** まで対象にする
-2. **エラーの局所性** — 違反が**宣言箇所を指すコンパイルエラー**として返る（Goaは生成時点で検証が終わる）
+1. **What the contract covers** — not only the API contract but **state
+   mutation, external effects, conditional effects, capabilities and
+   architecture**
+2. **The locality of errors** — a violation comes back as **a compile error
+   pointing at the declaration** (Goa's verification finishes at generation time)
 
-なおGoaが既にカバーしているError宣言とOpenAPI生成は、Verumでは未決定 / Full PoC送りである。**API契約の軸では現時点でGoaが優位**であることを認識しておく。
+Note that error declaration and OpenAPI generation, which Goa already covers, are
+undecided or deferred to the Full PoC in Verum. **On the API-contract axis Goa is
+currently ahead**, and that should be kept in view.
 
 ### Igniter.js
 
-AI-native TypeScript framework。
+An AI-native TypeScript framework.
 - Predictable architecture
 - Explicit structure
-- AI-friendly codebase
+- An AI-friendly codebase
 
-参考にする思想:
-- AIが理解しやすい構造
-- Convention / Predictability
+What is taken from it:
+- A structure an AI finds easy to understand
+- Convention and predictability
 
-ただし本プロジェクトではさらに型付きEffect/Mutation Contractへ踏み込む。
+This project goes further, into typed effect and mutation contracts.
 
 ### Nifra
 
-AI-edited codebaseを意識したTypeScript framework。
+A TypeScript framework built around an AI-edited codebase.
 - AI Context
-- Scaffold
+- Scaffolding
 - Validation
 - Architecture drift detection
 
-参考にする思想:
-- AIにコードベースを操作するための構造化されたContextを提供
+What is taken from it:
+- Providing structured context so an AI can operate on the codebase
 - Architecture validation
 
-### AI Agent Frameworks
+### AI agent frameworks
 
-Google ADK Go / Microsoft Agent Frameworkなどは、「AIを組み込んだアプリケーション」を作る方向。
+Google ADK Go, Microsoft Agent Framework and the like point at building
+applications that embed AI.
 
-本プロジェクトは逆方向:
-- **AIそのものを作るFrameworkではない**
-- **AIがWebアプリケーションを正しく実装するためのFramework**
+This project points the other way:
+- **It is not a framework for building AI**
+- **It is a framework for an AI to implement web applications correctly**
 
 ---
 
-## 5. Core Differentiation
+## 5. Core differentiation
 
-### EndpointをHTTP関数としてではなく、Semantic Contractとして扱う
+### An endpoint is a semantic contract, not an HTTP function
 
-通常:
+Ordinarily:
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[put("/users/{user_id}")]
 async fn update_user(...) -> Result<User>
 ```
 
-これだけではEndpoint内部を読まないと、
+From that alone, without reading the endpoint's body, none of the following is
+knowable:
 
-- 何を変更するのか
-- 何を読むのか
-- DBを書き換えるのか
-- 外部サービスを呼ぶのか
-- Eventを発行するのか
-- どの条件で何が変わるのか
+- what it changes
+- what it reads
+- whether it writes to the database
+- whether it calls an external service
+- whether it emits an event
+- what differs under which conditions
 
-が分からない。
+Here, all of that is expressed on the endpoint itself. And what matters is that
+this information is not a comment but **guaranteed by the type system.**
 
-本プロジェクトでは、Endpointそのものにこれらを表現する。これらの情報は単なるコメントではなく、**型システムによって保証されること**が重要。
-
-具体的な表現方法は [`specs/semantic-endpoint.md`](./specs/semantic-endpoint.md) を参照。
+How it is expressed concretely is in
+[`specs/semantic-endpoint.md`](./specs/semantic-endpoint.md).
 
 ---
 
 ## 6. Positioning
 
-> 旧 §17 Potential Project Positioning と §46 Framework Positioning を統合。
+> A consolidation of the old §17 Potential Project Positioning and §46 Framework
+> Positioning.
 
-単なる:
+Not merely:
 
-> AI-friendly Web Framework
+> an AI-friendly web framework
 
-ではなく、
+but:
 
-> **AI-native Web Framework**
+> **an AI-native web framework**
 
-または、
+or:
 
-> **Semantic / Effect-aware Web Framework**
+> **a semantic / effect-aware web framework**
 
-として位置付ける。
-
-### 既存Frameworkとの位置付け
+### Against the existing frameworks
 
 ```text
 Hyper / Tower
     ↓
-HTTP / Middleware foundation
+HTTP / middleware foundation
 
 Axum
     ↓
-Composable Web Framework
+composable web framework
 
 Actix Web
     ↓
-High-performance Web Framework
+high-performance web framework
 
 Rocket
     ↓
-Declarative / Compile-time checked Web Framework
+declarative / compile-time-checked web framework
 
 Loco
     ↓
-Rails-like Full-stack Framework
+Rails-like full-stack framework
 
 Pavex
     ↓
-Compile-time Dependency Injection / Architecture
+compile-time dependency injection / architecture
 
 Verum
     ↓
-AI-first Semantic Web Framework
+AI-first semantic web framework
 ```
 
-### 本Frameworkの独自性
+### What is distinctive here
+
+Treating all of
 
 ```text
 HTTP
 +
-Domain Semantics
+domain semantics
 +
-Mutation
+mutation
 +
-Conditional Effects
+conditional effects
 +
-External Effects
+external effects
 +
-Capabilities
+capabilities
 +
-Architecture
+architecture
 +
 AI Context
 ```
 
-を型付きMetadataとして扱うこと。
+as typed metadata.
 
-### 最終的な思想
+### The philosophy, stated once
 
-> **AIがWebアプリケーションのコードを読む量を減らし、Endpointの意味・可変性・副作用・Capability・Architectureを型付きメタ情報から理解できるようにする。さらに、そのメタ情報と実装が一致することを静的に保証する。**
+> **Reduce how much of a web application's code an AI has to read, so that an
+> endpoint's meaning, mutability, side effects, capabilities and architecture are
+> understandable from typed metadata — and guarantee statically that the metadata
+> and the implementation agree.**
 
 ---
 
-## 7. Comments Are Not the Source of Truth
+## 7. Comments are not the source of truth
 
-本Frameworkでは、**コメントを仕様の信頼できる情報源として扱わない**。
+This framework **does not treat comments as a trustworthy source for the
+specification.**
 
-最重要原則:
+The overriding principle:
 
-> **Types and Semantic Metadata are authoritative. Comments are supplementary.**
+> **Types and semantic metadata are authoritative. Comments are supplementary.**
 
-コメントが一切存在しなくても、AI・人間の実装者・IDE・静的解析がEndpointの意味を理解できることを目指す。
+The goal is that an AI, a human implementer, an IDE and static analysis can all
+understand an endpoint's meaning with no comments present at all.
 
-### 情報の信頼順位
+### The trust ordering
 
-概念的には以下の順序で信頼する。
+Conceptually, trust runs in this order:
 
-1. Type / Contract
-2. Semantic Metadata
-3. Static Analysis / Inferred Semantics
+1. Type / contract
+2. Semantic metadata
+3. Static analysis / inferred semantics
 4. Implementation
-5. Generated Documentation
-6. Human Comments
+5. Generated documentation
+6. Human comments
 
-コメントを禁止するわけではない。コメントは補足説明として利用できるが、**仕様のAuthorityにはしない**。
+Comments are not banned. They may be used as supplementary explanation, but **they
+are never the specification's authority.**
 
-### 例
+### An example
 
 ```rust,ignore   // fragment, not a complete item
 /// This endpoint only updates the user's name.
@@ -346,104 +393,121 @@ fn update_user(...) {
 }
 ```
 
-このような場合、コメントを信頼するのではなく、型・Contractによって実際に許可されているMutationを判断する。
+Here the comment is not trusted; what mutations are actually permitted is decided
+by the types and the contract.
 
 ---
 
-## 8. Self-describing Codebase
+## 8. A self-describing codebase
 
-最終的には、Frameworkによってコードベースそのものが型付きSemantic Metadataを持つ状態を目指す。
+The end goal is a state in which, through the framework, the codebase itself
+carries typed semantic metadata.
 
 ```text
 Codebase
-├── Types
-├── Contracts
-├── Effects
-├── Capabilities
-├── Architecture
-└── State Transitions
+├── types
+├── contracts
+├── effects
+├── capabilities
+├── architecture
+└── state transitions
 ```
 
-ここから以下を生成できるようにする。
+From which the following can be generated:
 
 ```text
-              Type / Contract
+              type / contract
                      │
         ┌────────────┼────────────┐
         ↓            ↓            ↓
-       AI       Documentation    IDE
+       AI       documentation    IDE
         │
         ↓
-   Implementation
+   implementation
 ```
 
-これらを別々に管理するのではなく、**Semantic ContractをSingle Source of Truthにする**。
+Rather than maintaining these separately, **the semantic contract is the single
+source of truth.**
 
-生成対象の詳細は [`specs/ai-context.md`](./specs/ai-context.md) を参照。
+What is generated is detailed in
+[`specs/ai-context.md`](./specs/ai-context.md).
 
 ---
 
-## 9. Token Efficiency Goal
+## 9. The token-efficiency goal
 
-AIがEndpointを理解するために、Handler → Service → Repository → Model → Event → Middlewareと大量のコードを探索する必要をなくす。
+Remove the need for an AI to explore handler → service → repository → model →
+event → middleware to understand an endpoint.
 
-従来:
-
-```text
-Endpoint
-  ↓
-Handler
-  ↓
-Service
-  ↓
-Repository
-  ↓
-Model
-  ↓
-Event
-  ↓
-Middleware
-  ↓
-大量のコード探索
-```
-
-本Framework:
+Conventionally:
 
 ```text
-Endpoint
+endpoint
   ↓
-Semantic Contract
+handler
   ↓
-必要な部分だけ探索
+service
+  ↓
+repository
+  ↓
+model
+  ↓
+event
+  ↓
+middleware
+  ↓
+a great deal of code to explore
 ```
 
-### Goal
+Here:
 
-> **数千行のコードを読む代わりに、数十〜数百token程度のSemantic Contractを最初に読む。**
+```text
+endpoint
+  ↓
+semantic contract
+  ↓
+explore only what is needed
+```
 
-AIはContractを入口として必要なコードだけを追加探索する。
+### The goal
 
-### この主張は場面を区別する必要がある（未検証）
+> **Instead of reading thousands of lines of code, read a semantic contract of
+> tens to hundreds of tokens first.**
 
-| タスク | 収支 |
+The AI uses the contract as the entry point and explores only the code it
+additionally needs.
+
+### This claim has to distinguish between situations (unverified)
+
+| Task | Budget |
 |---|---|
-| 多数のEndpointを**概観する** | 黒字。Contractだけ読めば済む |
-| 1つのEndpointを**編集する** | **赤字の可能性**。Contractと実装の両方を読み、加えてフレームワークの規約知識が必要 |
+| **Surveying** many endpoints | Positive. Reading the contracts is enough |
+| **Editing** one endpoint | **Possibly negative.** Both the contract and the implementation have to be read, plus knowledge of the framework's conventions |
 
-実際のAI Codingは後者が大半である。加えて:
+Real AI coding is mostly the latter. On top of that:
 
-- AI Contextは1 endpointで約400〜600token。200 endpointで約100k token（[`specs/ai-context.md`](./specs/ai-context.md) 自身がサイズ管理を未解決としている）
-- Verumの概念数は約40（Axum 8〜10、Rails 15〜20）。しかも**学習データに存在しないため毎セッションcontextに載せる必要がある**
+- The AI Context is roughly 400–600 tokens per endpoint, around 100k at 200
+  endpoints ([`specs/ai-context.md`](./specs/ai-context.md) itself records size
+  management as unresolved)
+- Verum has roughly 40 concepts (Axum 8–10, Rails 15–20), and **because they are
+  absent from the training data they have to be loaded into context every
+  session**
 
-**損益分岐点を数値で出すまで、この主張を無条件に掲げるべきではない。** 目的を「token削減」から「**コンパイラをAIのフィードバックループにして契約違反を実行前に止める**」に付け替える選択肢も含めて検討中。[`specs/research-questions.md`](./specs/research-questions.md) Q-B を参照。
+**Until the break-even point is produced as a number, this claim should not be
+made unconditionally.** Under consideration is repointing the objective from
+"fewer tokens" to **"make the compiler the AI's feedback loop and stop contract
+violations before they run"**. See
+[`specs/research-questions.md`](./specs/research-questions.md) Q-B.
 
-具体的なContract形式は [`specs/ai-context.md`](./specs/ai-context.md) を参照。
+The concrete contract format is in
+[`specs/ai-context.md`](./specs/ai-context.md).
 
 ---
 
-## 10. AI Codingを第一級の設計制約にする
+## 10. AI coding as a first-class design constraint
 
-Framework APIの設計時に、人間向けのErgonomicsだけではなく以下を第一級の指標として扱う。
+When designing the framework API, treat the following as first-class metrics
+alongside human ergonomics.
 
 - AI discoverability
 - AI context size
@@ -451,87 +515,94 @@ Framework APIの設計時に、人間向けのErgonomicsだけではなく以下
 - AI error rate
 - AI exploration cost
 - Specification violation rate
-- Unexpected behavior rate
+- Unexpected behaviour rate
 
-測定指標の詳細は [`specs/evaluation.md`](./specs/evaluation.md) を参照。
+The metrics are detailed in [`specs/evaluation.md`](./specs/evaluation.md).
 
 ---
 
-## 11. Freedom Without Chaos
+## 11. Freedom without chaos
 
-本Frameworkの「自由度」は、低レイヤーへのアクセスを制限することではない。
+"Freedom" here does not mean restricting access to the lower layers.
 
-### 目指さないもの
-
-```text
-Frameworkが決めた場所にしかコードを書けない
-```
-
-という過度にOpinionatedな設計。
-
-### 目指すもの
+### What is not wanted
 
 ```text
-Middleware（Endpointの外側）
-      ↓
-High-level API
-      ↓
-Service
-      ↓
-Repository
-      ↓
-Runtime
-      ↓
-Raw HTTP / Network
+code can only be written where the framework says it may
 ```
 
-どの階層にも自由に降りられる。ただし、各階層に**型付きの道**を用意する。
+— an excessively opinionated design.
+
+### What is wanted
+
+```text
+middleware (outside the endpoint)
+      ↓
+high-level API
+      ↓
+service
+      ↓
+repository
+      ↓
+runtime
+      ↓
+raw HTTP / network
+```
+
+Every layer is reachable. But every layer gets **a typed road.**
 
 > **Freedom without chaos.**
 
-自由度を奪うのではなく、**自由に進める道を舗装する**。
+Not taking freedom away, but **paving the roads freedom travels on.**
 
-> **注意: この両立は現時点で未証明である。** 「無申告の抜け穴」と「Escape Hatch」を区別する唯一の根拠は「宣言されているか否か」だが、その宣言機構（`#[escape_hatch]`）はまだ設計されていない。記録は現状自己申告であり、属性を書き忘れれば記録されない。
+> **Caution: this reconciliation is unproven today.** The only basis for
+> distinguishing "an unregistered bypass" from "an escape hatch" is whether it is
+> declared, and the declaration mechanism (`#[escape_hatch]`) has not been designed
+> yet. The recording is self-reported, and forgetting the attribute means nothing
+> is recorded.
 >
-> 原則18（Capability-based Safety）と原則21（Escape Hatch）を接続する部品が存在しないため、この節は**目標であって達成された性質ではない**。[`specs/research-questions.md`](./specs/research-questions.md) を参照。
+> Because no component connects principle 18 (capability-based safety) to
+> principle 21 (escape hatch), this section is **a goal, not an achieved
+> property.** See [`specs/research-questions.md`](./specs/research-questions.md).
 
 ---
 
-## 12. Performance Philosophy
+## 12. Performance philosophy
 
-AI-firstであることを理由にRuntime Performanceを犠牲にしない。
+Being AI-first is not a reason to sacrifice runtime performance.
 
-Semantic Metadataは可能な限りCompile Timeで消費する。
+Semantic metadata is consumed at compile time as far as possible.
 
 ```text
-Semantic Contract
+semantic contract
         ↓
-Compile Time
+compile time
         ↓
-Validation
+validation
         ↓
-Optimization
+optimisation
         ↓
-Lean Runtime
+lean runtime
 ```
 
-理想的には、RuntimeにはAI向けMetadataによる大きなOverheadを残さない。
+Ideally the runtime carries no significant overhead from metadata that exists for
+an AI's benefit.
 
-性能目標の詳細は [`specs/performance.md`](./specs/performance.md) を参照。
+The performance targets are detailed in
+[`specs/performance.md`](./specs/performance.md).
 
 ---
 
 ## 13. Naming
 
-### プロジェクト名: Verum
+### The project's name: Verum
 
-**Verum** — 真実 / 真なるもの。
+**Verum** — the truth, that which is true.
 
-「AIが出したコードを信じる」のではなく、
+Not "trust the code an AI produced", but a guarantee that the code is
+*verum* — true.
 
-コードが Verum = 真実であることを保証する。
-
-### 検討したConcept
+### Concepts considered
 
 ```text
 Intent
@@ -550,67 +621,70 @@ Rail
 
 #### Intent
 
-AIが「何を実現しようとしているか」を表す。
+What the AI is trying to achieve.
 
 ```text
 AI
  ↓
-Intent
+intent
  ↓
-Implementation
+implementation
 ```
 
 #### Pact
 
-AI / Framework / Codeの間の契約。
+The contract between AI, framework and code.
 
 ```text
-Endpoint Pact
-Effect Pact
-Mutation Pact
-Architecture Pact
+endpoint pact
+effect pact
+mutation pact
+architecture pact
 ```
 
 #### Axiom
 
-破ってはいけない不変条件。
+The invariants that must not be broken.
 
 ```text
-Axiom
+axiom
  ↓
-Invariant
+invariant
  ↓
-Proof
+proof
 ```
 
 #### Verity
 
-AI生成コードを単純に信頼するのではなく、型・契約によって正しさを保証する思想。
+The idea of guaranteeing correctness through types and contracts rather than
+simply trusting AI-generated code.
 
 #### Rail / Path / Way
 
-AIの自由を奪うのではなく、AIが迷わないように「道」を敷く思想。
+The idea of laying a road so the AI does not get lost, rather than taking its
+freedom away.
 
-ただしRailsとの混同などを考慮し、正式命名時に再検討する。
+Reconsidered at formal naming, given the confusion with Rails among other things.
 
-### Naming Strategy
+### Naming strategy
 
-現段階では仮名で開発を開始してもよい。
+Starting development under a working name is acceptable.
 
-推奨プロセス:
+The recommended process:
 
 ```text
-Prototype
+prototype
  ↓
-Hello World
+hello world
  ↓
 CRUD
  ↓
-TODO App
+a TODO app
  ↓
-Semantic / Effect / Capabilityが固まる
+semantics / effects / capabilities settle
  ↓
-正式命名
+formal naming
 ```
 
-名前を先に設計思想へ固定しすぎず、TODOアプリが完成してFrameworkの本質が見えた段階で正式名称を決定する。
+Rather than fixing the name to the design philosophy too early, decide the formal
+name once the TODO app is complete and the framework's essence is visible.

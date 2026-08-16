@@ -1,16 +1,17 @@
 # Middleware
 
-Middlewareと低レイヤーAPIに型付きの「道」を敷く。tower / tower-httpとの境界設計を含む。
+Laying a typed path through middleware and the low-level APIs, including where
+the boundary with tower / tower-http sits.
 
-> 旧 §42 Low-level APIs と §56 Tower Boundary Design を統合。
-
-関連: [`runtime-stack.md`](./runtime-stack.md) / [`capability-system.md`](./capability-system.md)
+Related: [`runtime-stack.md`](./runtime-stack.md),
+[`capability-system.md`](./capability-system.md).
 
 ---
 
-## 方針
+## Approach
 
-Middlewareや低レイヤーを自由に利用できることを重視する。一方、以下のような何でも入りMiddlewareは避けたい。
+Being able to use middleware and the lower layers freely matters. What is to be
+avoided is the middleware that does everything:
 
 ```rust,ignore   // fragment, not a complete item
 async fn middleware(req, next) {
@@ -24,7 +25,7 @@ async fn middleware(req, next) {
 }
 ```
 
-代わりに、意味の明確な構成要素を提供する。
+Components with a clear meaning are provided instead.
 
 ```text
 AuthenticationMiddleware
@@ -34,17 +35,17 @@ TracingMiddleware
 CacheMiddleware
 ```
 
-各Middlewareについて、以下を型またはMetadataで表現する。
+For each one, the following are expressed in types or metadata:
 
-- Allowed Effects
-- Forbidden Effects
+- Allowed effects
+- Forbidden effects
 - Capabilities
 - Inputs
 - Outputs
 
 ---
 
-## `tower::Service` への評価
+## Assessing `tower::Service`
 
 ```rust
 trait Service<Request> {
@@ -56,74 +57,92 @@ trait Service<Request> {
 }
 ```
 
-これは**2019年、`async fn` in traitが存在しなかった時代の設計**であり、Verumとの噛み合わせに3つの問題がある。
+This is **a design from 2019, before `async fn` in traits existed**, and it fits
+Verum badly in three ways.
 
-1. **型パラメータがRequest / Response / Errorの3つだけ**
-   - EffectやCapabilityを載せる場所が構造的に存在しない
-   - 「MiddlewareにAllowed / Forbidden Effectsを型で表現」はtowerの型では書けない
+1. **Only three type parameters: request, response, error.**
+   - There is structurally nowhere to carry an effect or a capability.
+   - "Express a middleware's allowed and forbidden effects in types" cannot be
+     written with tower's types.
 
-2. **`&mut self` + `poll_ready`**
-   - backpressureは概念的に美しいが、HTTP middlewareの実態は99%が`Poll::Ready(Ok(()))`を返すだけ
-   - `&mut self`のため並行呼び出しに`Clone`が必要になる
-   - 現在は `fn call(&self, req) -> impl Future<Output = Response> + Send`（**RPITIT**）で書ける
-   - **AFIT（`async fn` in trait）ではない。** chain が `Box<dyn Middleware>` を持てず（`E0038`）、Future が `Send` にならないため hyper の multi-thread runtime に載らない（[`rust-type-model.md`](./rust-type-model.md)、[RK-012](../dev/code/review-knowledge.md)、いずれも実測）。dyn 互換性は**消去レイヤ**で解決する — それが上の200行に含まれるコストである
+2. **`&mut self` plus `poll_ready`.**
+   - Backpressure is conceptually elegant, but 99% of HTTP middleware just
+     returns `Poll::Ready(Ok(()))`.
+   - `&mut self` means concurrent invocation requires `Clone`.
+   - Today it can be written as
+     `fn call(&self, req) -> impl Future<Output = Response> + Send` — **RPITIT**.
+   - **Not AFIT (`async fn` in trait).** The chain cannot hold a
+     `Box<dyn Middleware>` (`E0038`), and the future is not `Send`, so it does
+     not load onto hyper's multi-thread runtime (both measured;
+     [`rust-type-model.md`](./rust-type-model.md)). dyn compatibility is bought
+     back with an **erasure layer** — that is the cost included in the 200 lines
+     below.
 
-3. **`type Error`**
-   - HTTPサーバでは「エラーもレスポンス」
-   - Axumは`Error = Infallible`に固定しており、この型パラメータは実質死んでいる
+3. **`type Error`.**
+   - In an HTTP server, an error is also a response.
+   - Axum pins it to `Error = Infallible`, so the parameter is effectively dead.
 
-**結論:** `Service` traitはVerumが積極的に採用したい抽象ではなく、tower-httpを使うために必要なadapterである。
+**Conclusion:** the `Service` trait is not an abstraction Verum wants to adopt.
+It is the adapter needed to use tower-http.
 
 ---
 
-## 境界の設計
+## The boundary
 
-towerは「依存」ではなく「境界」として扱う。
+tower is treated as a boundary, not a dependency.
 
 ```text
 hyper connection
       ↓
-┌─ tower Service の世界（最外周インフラ層）───────────┐
-│  tower-http: CORS / Compression / Trace / Timeout  │
-└────────────────────────────────────────────────────┘
-      ↓  ← 唯一の境界。adapter 1枚
-┌─ Verum の世界 ──────────────────────────────────────┐
-│  Router                                             │
-│      ↓                                              │
-│  Semantic Middleware chain (RPITIT, &self, Effects) │
-│      ↓                                              │
-│  Endpoint<Effects, Capabilities>                     │
-└─────────────────────────────────────────────────────┘
+┌─ the tower Service world (outermost infrastructure) ──┐
+│  tower-http: CORS / Compression / Trace / Timeout     │
+└───────────────────────────────────────────────────────┘
+      ↓  ← the only boundary; one adapter
+┌─ Verum's world ───────────────────────────────────────┐
+│  Router                                                │
+│      ↓                                                 │
+│  Semantic middleware chain (RPITIT, &self, effects)    │
+│      ↓                                                 │
+│  Endpoint<Effects, Capabilities>                        │
+└────────────────────────────────────────────────────────┘
 ```
 
-これにより:
+This gives:
 
-- tower-httpの実績あるロジックをそのまま使える
-- Verum の Middleware APIを最新のRust idiom（**RPITIT + `Send`**, `&self`, Effect型パラメータ）で書ける
-- tower 0.5 → 0.6の破壊的変更は**adapter 1枚に閉じる**
-- ユーザーとAIはtowerの型を一切見ない
+- tower-http's proven logic, used as it is.
+- Verum's middleware API written in current Rust idiom — **RPITIT with `Send`**,
+  `&self`, effect type parameters.
+- Breaking changes from tower 0.5 to 0.6 **confined to one adapter.**
+- Users and AI never see a tower type.
 
-### towerを自作する必要はない
+### There is no need to reimplement tower
 
-Verumが必要とするのはMiddleware chainの合成だけ。towerの `discover` / `balance` / `retry` / `buffer` / `load` は一切不要。
+All Verum needs is composing a middleware chain. tower's `discover`, `balance`,
+`retry`, `buffer` and `load` are not needed at all.
 
-自前のMiddleware trait + chain合成は概算**200行程度**。towerの再実装ではなく、**必要な部分だけを最新の形で持つ**。
+A hand-written middleware trait plus chain composition is roughly **200 lines**.
+Not a reimplementation of tower — **only the parts needed, in a current shape.**
 
-> **当初は100行と見積もっていた。** [`runtime-stack.md`](./runtime-stack.md) が消去レイヤのコストを算入して200行に訂正しており（RK-012）、本ファイルはその訂正を受け取っていなかった（#43 項目9）。**見積もりの正典は [`runtime-stack.md`](./runtime-stack.md) の表**で、ここはそれを引く。
+> **The original estimate was 100 lines.**
+> [`runtime-stack.md`](./runtime-stack.md) revised it to 200 once the erasure
+> layer's cost was included, and this file had not received that correction.
+> **The estimate table in [`runtime-stack.md`](./runtime-stack.md) is the
+> canon**; this document cites it.
 
 ---
 
-## Middlewareの分割線
+## Where middleware divides
 
-Middlewareリストは、この境界でちょうど二分される。
+The middleware list splits exactly along this boundary.
 
-| Middleware | 担当 | 理由 |
+| Middleware | Owner | Reason |
 |---|---|---|
-| CORS / Compression / Tracing / Logging | tower-http | 仕様が不変。GETにも許可されるEffectの種類 |
-| **Authentication** | **Verum** | Capabilityを発行する側。型で表現すべき本体 |
-| **RateLimit** | **Verum** | CacheRead / CacheWrite Effectを持つ。`tower::limit`ではなくCapabilityとして扱う |
-| **Cache** | **Verum** | CacheRead / CacheWriteが絡む |
+| CORS / Compression / Tracing / Logging | tower-http | The behaviour is fixed. These are effects permitted even on a GET |
+| **Authentication** | **Verum** | It issues capabilities. This is the part that belongs in types |
+| **Rate limiting** | **Verum** | It carries CacheRead / CacheWrite effects. Treated as a capability rather than as `tower::limit` |
+| **Cache** | **Verum** | CacheRead and CacheWrite are involved |
 
-Authentication MiddlewareがCapabilityを発行し、それがEndpointへ流れる構造は Capability System の中核であり、towerの型では表現できない。
+Authentication middleware issuing capabilities that then flow to the endpoint is
+the core of the capability system, and tower's types cannot express it.
 
-分割線が「**意味を持つか / インフラか**」で入っている。
+The dividing line is **"does it carry meaning, or is it infrastructure?"**

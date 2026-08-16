@@ -20,7 +20,7 @@ Service is allowed to receive. It appears in at least eight places:
 |---|---|
 | `fn users(&self) -> Repo<User, Self::R, Self::M>` | `capability-system.md:191`, `architecture-contract.md:53`, `rust-type-model.md:279` |
 | `impl<R, M> UserRepo<M> for Repo<User, R, M>` | `rust-type-model.md:289` |
-| "Service に渡せるのはパラメタライズ済みの `Repo<D, R, M>` のみ" | `architecture-contract.md:100`, `capability-system.md:232` |
+| "What a service may receive is a parameterised `Repo<D, R, M>`" | `architecture-contract.md:100`, `capability-system.md:232` |
 | module placement — `capability.rs` | `docs/rules/design.md:72` |
 
 **There is no declaration.** `grep 'struct Repo' docs/` returns nothing.

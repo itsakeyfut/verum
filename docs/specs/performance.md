@@ -1,77 +1,86 @@
 # Performance
 
-Runtime性能の目標と、Semantic MetadataをRuntime Overheadにしないための方針。
+Runtime performance targets, and the policy that keeps semantic metadata out of
+the runtime.
 
-関連: [`runtime-stack.md`](./runtime-stack.md) / [`evaluation.md`](./evaluation.md)
-
----
-
-## 原則
-
-AI-firstであることを理由にRuntime Performanceを犠牲にしない。
+Related: [`runtime-stack.md`](./runtime-stack.md),
+[`evaluation.md`](./evaluation.md). The implementation rules are in
+[`../rules/perf.md`](../rules/perf.md).
 
 ---
 
-## Performance Goal
+## Principle
 
-- **Axum級の性能を目標とする**
-- 可能であればActix Web級も研究する
-- ただし初期段階からActix Web超えを絶対条件にはしない
-
-Hyperを直接利用するため、Axum級は事実上の下限になる見込み。
+Being AI-first is not a reason to give up runtime performance.
 
 ---
 
-## Compile-time Consumption
+## Goal
 
-Semantic Metadataは可能な限りCompile Timeで消費する。
+- **Axum-class performance is the target.**
+- Investigate Actix Web-class where possible.
+- But beating Actix Web is not a hard requirement from the outset.
+
+Since Hyper is called directly, Axum-class is expected to be the effective floor.
+
+---
+
+## Spending it at compile time
+
+Semantic metadata is consumed at compile time as far as possible.
 
 ```text
-Semantic Contract
+Semantic contract
         ↓
-Compile Time
+Compile time
         ↓
 Validation
         ↓
-Optimization
+Optimisation
         ↓
-Lean Runtime
+Lean runtime
 ```
 
-理想的には、RuntimeにはAI向けMetadataによる大きなOverheadを残さない。
+Ideally the runtime carries no significant overhead from metadata that exists for
+an AI's benefit.
 
 ---
 
-## 最適化の余地
+## Room for optimisation
 
-### Compile-time route table
+### A compile-time route table
 
-derive macro + inventoryにより全Endpointがコンパイル時に既知になるため、radix trieの実行時構築を避け、`match`式やperfect hashingに落とせる。
+With a derive macro plus `inventory`, every endpoint is known at compile time.
+That removes the runtime construction of a radix trie and allows a `match`
+expression or perfect hashing instead.
 
-Axumの構造では原理的に不可能な最適化。ただし初期は素直なmatcherで十分。
+This optimisation is structurally impossible in Axum's design. A straightforward
+matcher is enough to begin with.
 
-### Capability トークンのゼロコスト化
+### Capability tokens cost nothing
 
-Capabilityは可能な限りZST（Zero-Sized Type）とし、Runtimeに実体を持たせない。型検査のためだけに存在させる。
+Capabilities are ZSTs (zero-sized types) wherever possible, with no runtime
+representation. They exist only for type checking.
 
 ---
 
-## 監視すべきコスト
+## Costs to watch
 
-| 項目 | リスク |
+| Item | Risk |
 |---|---|
-| 型レベルの集合演算 | trait解決の爆発 → コンパイル時間の悪化 |
-| Effectタプルの肥大化 | 同上 |
-| derive macroの生成量 | コンパイル時間 |
-| Runtime Metadata保持 | メモリ / 実行速度 |
+| Type-level set operations | Trait resolution explodes → compile time degrades |
+| Effect tuples growing | Same |
+| Volume of derive output | Compile time |
+| Metadata retained at runtime | Memory, execution speed |
 
-コンパイル時間は開発者体験に直結するため、性能指標として測定する。
+Compile time feeds directly into developer experience, so it is measured as a
+performance metric.
 
 ---
 
-## 未解決の問い
+## Open questions
 
-- パフォーマンス・コンパイル時間への影響をどこまで許容するか
-- Developer ExperienceとAI Experienceの両立
+- How much impact on performance and compile time is acceptable?
+- Reconciling developer experience with AI experience.
 
-[`research-questions.md`](./research-questions.md) を参照。
+See [`research-questions.md`](./research-questions.md).

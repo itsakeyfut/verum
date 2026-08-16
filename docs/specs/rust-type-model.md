@@ -1,48 +1,53 @@
-# Rust Type Model
+# Rust type model
 
-Verumの型表現にRustのどの機能を使うか。および実コンパイルで確認した制約。
+Which of Rust's features Verum's type representation uses, and the constraints
+confirmed by compiling.
 
-関連: [`capability-system.md`](./capability-system.md) / [`diagnostics.md`](./diagnostics.md) / [`unverified-boundaries.md`](./unverified-boundaries.md)
+Related: [`capability-system.md`](./capability-system.md),
+[`diagnostics.md`](./diagnostics.md),
+[`unverified-boundaries.md`](./unverified-boundaries.md).
 
-> このファイルの制約は `rustc 1.99.0-nightly` で実際にコンパイルして確認した結果を反映している。
+> The constraints in this file reflect results obtained by actually compiling on
+> `rustc 1.99.0-nightly`.
 
 ---
 
-## 前提条件
+## Prerequisites
 
-| 項目 | 要件 | 理由 |
+| Item | Requirement | Reason |
 |---|---|---|
-| **edition** | **2024** | `when` スコープに async closure (`AsyncFnOnce`) が必須 |
-| **MSRV** | **1.85+** | async closure / `#[diagnostic::do_not_recommend]` |
+| **edition** | **2024** | The `when` scope requires async closures (`AsyncFnOnce`) |
+| **MSRV** | **1.85+** | Async closures / `#[diagnostic::do_not_recommend]` |
 
-`runtime-stack.md` の依存方針と併せて仕様として固定する。
+Fixed as specification alongside `runtime-stack.md`'s dependency policy.
 
 ---
 
-## 利用する機能
+## Features used
 
-- Trait / Associated Type / Associated Const
-- Generic / Phantom Type / Typestate
-- Newtype
-- Proc Macro / Derive Macro
-- **Associated type equality bound**（`Endpoint<Mutates = ()>`）— stable
-- **`#[diagnostic::on_unimplemented]`**（1.78+）
-- **`#[diagnostic::do_not_recommend]`**（1.85+）— 再帰implのノイズ除去
-- **async closure / `AsyncFnOnce`**（1.85+, edition 2024）
-- sealed trait（privateなsupertrait）
+- Traits / associated types / associated consts
+- Generics / phantom types / typestate
+- Newtypes
+- Proc macros / derive macros
+- **Associated-type equality bounds** (`Endpoint<Mutates = ()>`) — stable
+- **`#[diagnostic::on_unimplemented]`** (1.78+)
+- **`#[diagnostic::do_not_recommend]`** (1.85+) — removing noise from recursive
+  impls
+- **Async closures / `AsyncFnOnce`** (1.85+, edition 2024)
+- Sealed traits (a private supertrait)
 
-### 使えない機能
+### Features that cannot be used
 
-| 機能 | 状態 |
+| Feature | State |
 |---|---|
-| **Associated const equality bound**（`Endpoint<METHOD = Method::GET>`） | **unstable**。`min_generic_const_args` に統合済み（incomplete）。trait側を `type const METHOD: Method;` と宣言する新構文も必要 |
-| negative trait bound（`!Trait`） | unstable |
-| 型パラメータのワイルドカード（`NotHas<Mutate<_, _>>`） | 書けない |
-| inherent impl（フレームワーク型に対する利用者クレートからのimpl） | E0116。拡張traitで代替 |
+| **Associated-const equality bounds** (`Endpoint<METHOD = Method::GET>`) | **Unstable.** Folded into `min_generic_const_args` (incomplete). It would also need the new syntax `type const METHOD: Method;` on the trait side |
+| Negative trait bounds (`!Trait`) | Unstable |
+| A wildcard over a type parameter (`NotHas<Mutate<_, _>>`) | Cannot be written |
+| An inherent impl (from a user crate, on a framework type) | E0116. Replaced by an extension trait |
 
 ---
 
-## Endpoint trait
+## The `Endpoint` trait
 
 ```rust,ignore   // needs a crate or a verum-private module this harness does not carry
 pub trait Endpoint: derive_facing::SealedEndpoint {
@@ -53,7 +58,7 @@ pub trait Endpoint: derive_facing::SealedEndpoint {
     type Request;
     type Response;
 
-    // 無条件に起こり得る Effect
+    // effects that may happen unconditionally
     type Reads;
     type Mutates;
     type Creates;
@@ -61,49 +66,57 @@ pub trait Endpoint: derive_facing::SealedEndpoint {
     type Emits;
     type Calls;
 
-    // 条件下でのみ起こり得る Effect
+    // effects that may happen only under a condition
     // (When<C, CondMutates, CondEmits, CondCalls>, (..., ()))
     type Conditional;
 }
 ```
 
-`Conditional` の要素は**カテゴリ別に分割された `When`** である。混在させると型レベル `Filter` が必要になり、catch-all implが必ず衝突する。
+`Conditional`'s elements are **`When`s split by category.** Mixed together, a
+type-level `Filter` becomes necessary and the catch-all impl always collides.
 
 ```rust
 pub struct When<C, CondMutates, CondEmits, CondCalls>(PhantomData<(C, CondMutates, CondEmits, CondCalls)>);
 ```
 
-宣言場所の規則（トップレベル = 無条件、`when` 内 = 条件付き、重複禁止）は [`conditional-effects.md`](./conditional-effects.md) を参照。
+The rule for where things are declared (top level = unconditional, inside `when` =
+conditional, no duplicates) is in
+[`conditional-effects.md`](./conditional-effects.md).
 
-### Methodは型レベルマーカにする
+### `Method` is a type-level marker
 
-`const METHOD: Method` ではなく `type Method = Get` とする。理由は2つ。
+`type Method = Get`, not `const METHOD: Method`. Two reasons.
 
-1. associated **const** equality bound はunstable（上記）
-2. **より本質的に、`impl<E: Endpoint<METHOD = Get>> ReadOnly for E {}` は論理が成立しない**
+1. Associated-**const** equality bounds are unstable (above).
+2. **More fundamentally, the logic of
+   `impl<E: Endpoint<METHOD = Get>> ReadOnly for E {}` does not work.**
 
-`ReadOnly: Endpoint<Mutates = (), ...>` をsupertraitに持つ以上、blanket impl側でも `Mutates = ()` を要求せざるを得ない。
+Because `ReadOnly` has `Endpoint<Mutates = (), ...>` as a supertrait, the blanket
+impl is forced to require `Mutates = ()` too.
 
 ```rust,compile_fail
 impl<E: Endpoint<Method = Get>> ReadOnly for E {}
 // error[E0271]: type mismatch resolving `<E as Endpoint>::Deletes == ()`
 ```
 
-つまりimplできるのは `impl<E: Endpoint<Mutates=(), Creates=(), Deletes=()>> ReadOnly for E {}` だけで、これは**METHODについて何も強制しない**。「GETなら必ずReadOnly」をimplで強制する経路は存在しない。
+So the only impl that can be written is
+`impl<E: Endpoint<Mutates=(), Creates=(), Deletes=()>> ReadOnly for E {}`, which
+**enforces nothing about the method.** There is no route to enforcing "a GET is
+always ReadOnly" through an impl.
 
-### GET ⇒ ReadOnly の強制方法
+### How GET ⇒ ReadOnly is enforced
 
-deriveが生成するコンパイル時アサーションで強制する。
+By a compile-time assertion the derive generates.
 
 ```rust
-// derive 生成
+// derive-generated
 const _: () = {
     fn assert_readonly<E: Endpoint<Method = Get> + ReadOnly>() {}
     fn check() { assert_readonly::<GetUser>(); }
 };
 ```
 
-このとき出るエラーは目標形式に一致する（検証済み）。
+The error this produces matches the target form (verified).
 
 ```text
 error[E0271]: type mismatch resolving `<BadGet as Endpoint>::Mutates == ()`
@@ -112,74 +125,91 @@ note: expected this to be `()`
    = note: expected unit type `()` found tuple `(MutateEmail, ())`
 ```
 
-しかも `note:` がderive生成の `type Mutates` のspanを指す。**spanをcontract属性のトークンに付け替えれば [`diagnostics.md`](./diagnostics.md) の理想形に到達できる。**
+And the `note:` points at the span of the derive-generated `type Mutates`.
+**Re-pointing that span at the contract attribute's tokens reaches
+[`diagnostics.md`](./diagnostics.md)'s ideal form.**
 
-さらに単純な代替として、proc macroが展開時点で「GETなのにmutates/creates/deletesがある」を弾く方法もある。エラーが最も精密になるため、両方実装する。
+A simpler alternative is for the proc macro to reject "a GET with
+mutates/creates/deletes" at expansion time. That gives the most precise error, so
+both are implemented.
 
-### `Conditional` 内の Mutation は macro で弾く
+### A mutation inside `Conditional` is rejected by the macro
 
-条件付きMutationを `when` 内に宣言する規則（[`conditional-effects.md`](./conditional-effects.md)）を採ったため、`Mutates = ()` だけではread-onlyを保証できない。`Conditional` 内の `CondMutates` も空でなければならない。
+Because conditional mutations are declared inside `when`
+([`conditional-effects.md`](./conditional-effects.md)), `Mutates = ()` alone
+cannot guarantee read-only: the `CondMutates` inside `Conditional` must be empty
+too.
 
-型で検査するには `Conditional` に対する再帰的な畳み込み（`AllCondMutatesEmpty`）が必要で、negative reasoningに近づき、エラーメッセージも「どの要素が原因か分からない」形に悪化する。
+Checking that in types needs a recursive fold over `Conditional`
+(`AllCondMutatesEmpty`), which approaches negative reasoning and degrades the
+error into a form that does not say which element caused it.
 
-**macroで弾く。** read-only なMethod（`Get` / `Head`）では `when` 内にも `mutates` / `creates` / `deletes` を書けない。層1で弾けるものは層1で弾く（[`diagnostics.md`](./diagnostics.md)）。
+**The macro rejects it.** On a read-only method (`Get` / `Head`), `mutates` /
+`creates` / `deletes` cannot appear inside `when` either. Catch at layer 1
+whatever layer 1 can catch ([`diagnostics.md`](./diagnostics.md)).
 
 ---
 
-## Effect集合は cons list で表現する
+## Effect sets are cons lists
 
-**フラットタプル `(A, B, C)` では所属判定を実装できない。**
+**A flat tuple `(A, B, C)` cannot implement a membership decision.**
 
 ```rust,compile_fail
-// ❌ フラットタプルに位置ごとの impl を書くと必ず E0119
+// ❌ per-position impls on a flat tuple are always E0119
 impl<A, B> Has<A> for (A, B) {}
 impl<A, B> Has<B> for (A, B) {}
 // error[E0119]: conflicting implementations of trait `Has<_>` for type `(_, _)`
 ```
 
-利用者が重複要素を書くかどうかに関係なく、**impl定義の時点で落ちる**。
+It fails **at the impl definition**, regardless of whether a user ever writes a
+duplicate element.
 
-したがって cons list に統一する。
+So cons lists are used throughout.
 
 ```rust
 type Mutates = (Mutate<User, user::Name>, (Mutate<User, user::Email>, ()));
 ```
 
-deriveが生成するため利用者は書かないが、**エラーメッセージには cons list が露出する**。
+The derive generates them so users never write them, but **cons lists are exposed
+in error messages.**
 
-| 集合 | 表現 |
+| Set | Representation |
 |---|---|
-| 空 | `()` |
-| 1要素 | `(A, ())` |
-| 2要素 | `(A, (B, ()))` |
+| Empty | `()` |
+| One element | `(A, ())` |
+| Two elements | `(A, (B, ()))` |
 
 ---
 
-## `Has<Set, Elem, Idx>` — index パラメータが必須
+## `Has<Set, Elem, Idx>` — the index parameter is mandatory
 
-素朴な再帰implはcoherence違反になる。
+The naive recursive impls violate coherence.
 
 ```rust,compile_fail
-// ❌ coherence 違反
+// ❌ a coherence violation
 pub trait Has<T> {}
 impl<H, T> Has<H> for (H, T) {}
 impl<H, X, T> Has<H> for (X, T) where T: Has<H> {}
 // error[E0119]: conflicting implementations
 ```
 
-`H == X` のときに2つのimplが重複する。理由は「where節が無視される」ことでは**なく**、tail側の `T: Has<H>` が**その交差点では充足可能**なので impl を分離しないことである（T-M0-08 で訂正。この区別が seal の設計根拠 — [`../rules/api-surface.md`](../rules/api-surface.md) §2）。
+The two impls overlap when `H == X`. The reason is **not** that where clauses are
+ignored, but that the tail's `T: Has<H>` is **satisfiable at that intersection**,
+so it does not separate the impls (corrected in T-M0-08; this distinction is what
+the seal design rests on — [`../rules/api-surface.md`](../rules/api-surface.md)
+§2).
 
-frunk方式のindex型パラメータで解決する（検証済み）。
+Solved with a frunk-style index type parameter (verified).
 
 ```rust,ignore   // needs a crate or a verum-private module this harness does not carry
 pub trait Has<T, Idx>: private::SealedHas<T, Idx> {}
 
-// T-M0-07 で追加。bound は trait ではなく impl 側に置く（呼び出し側に再掲させない）。
-pub trait ConsList: private::SealedConsList {}   // 形の well-formedness
-pub trait Index: private::SealedIndex {}         // 所属位置
+// Added in T-M0-07. The bound goes on the impl, not the trait (so callers do not restate it).
+pub trait ConsList: private::SealedConsList {}   // well-formedness of the shape
+pub trait Index: private::SealedIndex {}         // the position of membership
 
-pub struct Here(PhantomData<()>);              // 私有フィールド: downstream で構築不可（E0423）
-pub struct There<I>(PhantomData<fn() -> I>);   // `fn() -> I`: `I` の auto trait を継承しない
+pub struct Here(PhantomData<()>);              // private field: not constructible downstream (E0423)
+pub struct There<I>(PhantomData<fn() -> I>);   // `fn() -> I`: does not inherit `I`'s auto traits
 
 #[diagnostic::do_not_recommend]
 impl<H, T: ConsList> Has<H, Here> for (H, T) {}
@@ -188,62 +218,73 @@ impl<H, T: ConsList> Has<H, Here> for (H, T) {}
 impl<H, X, T: ConsList, I: Index> Has<H, There<I>> for (X, T) where T: Has<H, I> {}
 ```
 
-### 代償
+### The cost
 
-`Has` を使う**全メソッドに推論専用の型パラメータ `I` が付く**。
+**Every method that uses `Has` gains an inference-only type parameter `I`.**
 
 ```rust,ignore   // fragment, not a complete item
 fn set_email<I>(&self, u: &mut User, v: Email) -> Result<()>
 where M: Has<Mutate<User, user::Email>, I>;
 ```
 
-deriveが生成するため利用者は書かないが、ドキュメント中の全シグネチャがこの形になる。
+The derive generates them so users never write them, but every signature in the
+documentation takes this shape.
 
-### 重複要素で E0283 になる
+### A duplicate element gives E0283
 
-index方式は「要素がちょうど1回だけ現れる」ことを前提とする。重複すると `I` が一意に決まらない。
+The index approach assumes an element appears exactly once. With a duplicate, `I`
+is not uniquely determined.
 
 ```text
 error[E0283]: type annotations needed
 note: multiple `impl`s satisfying `(Mn, (Mn, ())): Has<Mn, _>` found
 ```
 
-発生経路が2つある。
+There are two routes to it.
 
-1. AIが `mutates = [User::email, User::email]` と重複を書く
-2. **`when` スコープで外側のEmitsと条件付きEmitsをAppendした結果、同じEffectが重複する**（`emits = [UserUpdated]` かつ `when(X) => { emits = [UserUpdated] }`）
+1. An AI writes a duplicate: `mutates = [User::email, User::email]`
+2. **Appending the outer emits and the conditional emits in a `when` scope
+   produces the same effect twice** (`emits = [UserUpdated]` together with
+   `when(X) => { emits = [UserUpdated] }`)
 
-2は正当なContractなのに壊れる。**deriveが重複を検出して弾き、**`Append` を呼ぶ前に**dedupする（**`Append` 自身は dedup できない** — T-M0-09 で確定。[`../rules/type-level.md`](../rules/type-level.md) §3）。**
+Route 2 breaks on a perfectly legitimate contract. **The derive detects duplicates
+and rejects them, and dedups before calling `Append`** (**`Append` itself cannot
+dedup** — settled in T-M0-09;
+[`../rules/type-level.md`](../rules/type-level.md) §3).
 
 ---
 
-## 型レベル演算の可否
+## Which type-level operations are viable
 
-| 演算 | 可否 | 用途 |
+| Operation | Viable? | Use |
 |---|---|---|
-| `Has<Set, Elem, Idx>`（実装は `Has<T, Idx>`、`Self` が集合） — 単一要素の所属判定 | **安全**（要素数に線形） | Capability検査 |
-| `Append<A, B>`（実装は `Append<B>`、`Self` が左辺） — cons listの連結 | **安全**（coherence問題なし、index 不要、検証済み） | `when` スコープのCapability合成 |
-| `Lookup<Set, Key, Idx>` — 型レベルmap検索 | **安全**（indexパラメータ版なら可、検証済み） | `Conditional` から条件を引く |
-| `Subset<A, B>` — 集合同士の包含判定 | **避ける**（組み合わせ爆発） | — |
-| `Filter<Set, Pred>` — 型レベルfilter | **避ける**（catch-all implが必ず衝突する） | — |
-| negative reasoning（`NotHas`） | **不可** | `Mutates = ()` で代替 |
+| `Has<Set, Elem, Idx>` (implemented as `Has<T, Idx>`, with `Self` the set) — membership of a single element | **Safe** (linear in the element count) | The capability check |
+| `Append<A, B>` (implemented as `Append<B>`, with `Self` the left side) — cons-list concatenation | **Safe** (no coherence problem, no index needed, verified) | Composing capabilities in a `when` scope |
+| `Lookup<Set, Key, Idx>` — a type-level map lookup | **Safe** (with the index-parameter version, verified) | Retrieving a condition from `Conditional` |
+| `Subset<A, B>` — containment between sets | **Avoid** (combinatorial explosion) | — |
+| `Filter<Set, Pred>` — a type-level filter | **Avoid** (the catch-all impl always collides) | — |
+| Negative reasoning (`NotHas`) | **Impossible** | Replaced by `Mutates = ()` |
 
-> 当初「集合演算を避ける、必要なのは単一要素の所属判定だけ」と記述していたが、**Conditional Effect は Lookup と Append を要求する**。方針を上記の表に精緻化した。
+> This originally said "avoid set operations; all that is needed is membership of
+> a single element", but **conditional effects require `Lookup` and `Append`.** The
+> policy has been refined into the table above.
 >
-> `Filter` が必要になるのを避けるため、**deriveは `Conditional` をカテゴリ別に分割して生成する**（`When<C, CondEmits, CondCalls, ...>`）。これは必須の設計制約である。
+> To avoid needing `Filter`, **the derive generates `Conditional` split by
+> category** (`When<C, CondEmits, CondCalls, ...>`). That is a mandatory design
+> constraint.
 
 ---
 
-## Field マーカ型
+## Field marker types
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[derive(Domain)]
 pub struct User {
-    id:    UserId,      // private 必須（pub は derive がエラー）
+    id:    UserId,      // private is required (pub is a derive error)
     email: Email,
 }
 
-// 生成
+// generated
 pub mod user {
     pub struct Id;
     pub struct Email;
@@ -255,23 +296,29 @@ pub mod user {
 }
 ```
 
-`const NAME: &str`（ライフタイム省略込み）と `type Ty` はともに問題なく動作する（検証済み）。
+`const NAME: &str` (with the lifetime elided) and `type Ty` both work without
+trouble (verified).
 
-Domainを不透明型にする理由は [`mutation-contract.md`](./mutation-contract.md) を参照。
+Why a domain is made opaque is in
+[`mutation-contract.md`](./mutation-contract.md).
 
 ---
 
-## Ctx / Repo は拡張traitで提供する
+## `Ctx` and `Repo` are provided through extension traits
 
-`Ctx` / `Repo` / `Projection` はフレームワーク側の型。**inherent implは型を定義したクレートでしか書けない**（E0116）。deriveは利用者クレートで動くため、ドキュメント初期案の形は原理的に不可能。
+`Ctx` / `Repo` / `Projection` are framework types. **An inherent impl can only be
+written in the crate that defines the type** (E0116). The derive runs in the
+user's crate, so the shape in the documentation's initial draft is impossible in
+principle.
 
 ```rust,compile_fail
-// ❌ 利用者クレートでは書けない
+// ❌ cannot be written in the user's crate
 impl<E: Endpoint> Ctx<E> { fn users(&self) -> Repo<User, ...> { ... } }
 // error[E0116]: cannot define inherent `impl` for a type outside of the crate
 ```
 
-deriveがDomainごとにローカルな拡張traitを生成する（2クレート構成で検証済み）。
+The derive generates a local extension trait per domain (verified with a
+two-crate setup).
 
 ```rust,ignore   // fragment, not a complete item
 pub trait CtxUsers {
@@ -289,87 +336,107 @@ pub trait UserRepo<M> {
 impl<R, M> UserRepo<M> for Repo<User, R, M> { ... }
 ```
 
-### 副作用
+### Side effects
 
-- 利用者が拡張traitを `use` する必要がある。忘れると「no method named `users`」という無関係なエラーになる → **deriveが `pub use` を吐くか `verum::prelude` を提供する**
-- associated type経由になるため型名が伸びる（`Repo<User, <Ctx<E> as CtxUsers>::R, _>`）
+- The user has to `use` the extension trait. Forgetting it gives the unrelated
+  error "no method named `users`" → **the derive emits a `pub use`, or
+  `verum::prelude` is provided**
+- Going through associated types lengthens the type names
+  (`Repo<User, <Ctx<E> as CtxUsers>::R, _>`)
 
-### where節はメソッド側に置く
+### The where clause goes on the method
 
-implに置くとE0599になり、`on_unimplemented` が無視される（検証済み）。
+On the impl it becomes E0599 and `on_unimplemented` is ignored (verified).
 
 ```text
-// ❌ impl に where → 意図したメッセージが出ない
+// ❌ where on the impl → the intended message does not appear
 // error[E0599]: the method `orders` exists ... but its trait bounds were not satisfied
 
-// ✅ method に where → 意図通り
+// ✅ where on the method → as intended
 // error[E0277]: `Order` is not in this endpoint's domain contract
 ```
 
-**deriveの生成テンプレートで固定する。**
+**Fixed in the derive's generated template.**
 
 ---
 
-## Handler trait — RPITIT + Send + 消去レイヤ
+## The `Handler` trait — RPITIT + Send + an erasure layer
 
-AFIT（`async fn` in trait）をそのまま使うと2つの問題がある（検証済み）。
+Using AFIT (`async fn` in trait) directly has two problems (verified).
 
 ```text
-// 1. Router が Box<dyn Handler> を持てない
+// 1. the router cannot hold a Box<dyn Handler>
 // error[E0038]: the trait `Handler` is not dyn compatible
 
-// 2. tokio::spawn / hyper に載せられない
+// 2. it does not load onto tokio::spawn / hyper
 // error: future cannot be sent between threads safely
 ```
 
-対処:
+The fix:
 
 ```rust
-// Send は RPITIT で解決
+// Send is solved by RPITIT
 pub trait Handler: Endpoint {
     fn handle(&self, req: Self::Request, ctx: Ctx<'_, Self>)
         -> impl Future<Output = Result<Self::Response>> + Send;
 }
 ```
 
-dyn互換性は解決しないため、**deriveがobject-safeな消去レイヤを生成する**。
+That does not solve dyn compatibility, so **the derive generates an object-safe
+erasure layer.**
 
 ```rust,ignore   // fragment, not a complete item
 fn call(&self, req: Request<Body>)
     -> Pin<Box<dyn Future<Output = Response> + Send + '_>>;
 ```
 
-Routerは `dyn ErasedHandler` を持つ。Middleware chainも同じ制約を受けるため、[`runtime-stack.md`](./runtime-stack.md) の行数見積もりに消去レイヤのコストを含める必要がある。
+The router holds `dyn ErasedHandler`. The middleware chain is under the same
+constraint, so [`runtime-stack.md`](./runtime-stack.md)'s line estimates have to
+include the erasure layer's cost.
 
 ---
 
-## Capability の実行時表現
+## The runtime representation of a capability
 
-Capabilityは値として実体化せず、**`Ctx<'req, E>` の型パラメータを通じて表現する**。すべてZSTであり、Runtimeに実体を持たない（[`performance.md`](./performance.md)）。
+Capabilities are never materialised as values; they are **expressed through
+`Ctx<'req, E>`'s type parameters.** They are all ZSTs with no runtime presence
+([`performance.md`](./performance.md)).
 
-> [`persistence.md`](./persistence.md) のRepository trait定義に `cap: &Cap<...>` 引数を書いていたが、この方針と矛盾するため削除した。Capabilityは引数として渡さない。
-
----
-
-## proc macroの可視範囲
-
-proc macroは単一アイテムのトークンしか見えず、呼び出し先の本体は見えない。
-
-ただし [`handler-rules.md`](./handler-rules.md) Rule 2 により、**Effectは `handle` という単一アイテムの中に構文的に閉じ込められている**。impl ブロックの属性マクロは `handle` の本体トークンを全て見られる。
-
-この事実は「実装からContractを生成する」方式の実現可能性を意味する。[`effect-inference.md`](./effect-inference.md) を参照。
-
-一方、macroが単一アイテムを見られることは属性内spanの保持にも使える（[`diagnostics.md`](./diagnostics.md)）。
+> [`persistence.md`](./persistence.md)'s repository trait definition carried a
+> `cap: &Cap<...>` argument. It contradicted this policy and was removed.
+> Capabilities are not passed as arguments.
 
 ---
 
-## 未解決の問い
+## What a proc macro can see
 
-- cons list + `There<There<...>>` がエラーメッセージに露出する問題（`do_not_recommend` で緩和済みだが完全ではない）
-- deriveが型エイリアスを生成して短い名前を出せるか
-- ~~Domain不透明化とsqlx `query_as!` / `FromRow` の相互運用~~ — **検証済み（T-M1-01 / #13）**。連携は成立、信頼境界の主張は不成立。[`persistence.md`](./persistence.md) §判定
-- `Ctx<'req, E>` と RPITIT / async closure の組み合わせ — **測定済み**（T-M1-02 / #14、`spikes/ctx-lifetime-rpitit/`）。判定の仕様反映は #38 の完了待ち
-- Projection型のergonomics
-- Rust以外（Go / TypeScript）への展開可能性
+A proc macro sees only the tokens of a single item, not the bodies of what it
+calls.
 
-[`research-questions.md`](./research-questions.md) を参照。
+But by [`handler-rules.md`](./handler-rules.md) Rule 2, **effects are
+syntactically confined inside a single item, `handle`.** An attribute macro on the
+impl block can see all of `handle`'s body tokens.
+
+That fact is what makes the "generate the contract from the implementation"
+approach feasible. See [`effect-inference.md`](./effect-inference.md).
+
+Conversely, a macro seeing a single item is also what allows spans inside the
+attribute to be preserved ([`diagnostics.md`](./diagnostics.md)).
+
+---
+
+## Open questions
+
+- The exposure of cons lists and `There<There<...>>` in error messages (mitigated
+  by `do_not_recommend`, but not eliminated)
+- Whether the derive can generate type aliases to emit shorter names
+- ~~Interoperating domain opacity with sqlx's `query_as!` / `FromRow`~~ —
+  **verified (T-M1-01 / #13).** The interoperation holds; the trust-boundary claim
+  does not. [`persistence.md`](./persistence.md) §Verdict
+- Combining `Ctx<'req, E>` with RPITIT and async closures — **measured**
+  (T-M1-02 / #14, `spikes/ctx-lifetime-rpitit/`). Folding the verdict into the
+  specs is waiting on #38
+- The ergonomics of the projection type
+- Whether this extends beyond Rust (Go / TypeScript)
+
+See [`research-questions.md`](./research-questions.md).

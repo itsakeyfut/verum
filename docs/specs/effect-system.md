@@ -1,24 +1,28 @@
-# Effect System
+# Effect system
 
-Web/API向けに意味論を拡張したEffect System。宣言粒度とカテゴリ分割の仕様。
+An effect system with semantics extended for web and API work. The
+specification of declaration granularity and the split by category.
 
-関連: [`capability-system.md`](./capability-system.md) / [`conditional-effects.md`](./conditional-effects.md) / [`rust-type-model.md`](./rust-type-model.md)
+Related: [`capability-system.md`](./capability-system.md),
+[`conditional-effects.md`](./conditional-effects.md),
+[`rust-type-model.md`](./rust-type-model.md).
 
 ---
 
-## 基本方針
+## The principle
 
-> 「副作用」を一つの巨大な `IO` にまとめない。
+> Do not collapse "side effect" into one giant `IO`.
 >
-> **AIが判断できる粒度までEffectを分解する。**
+> **Decompose effects down to a granularity an AI can act on.**
 
 ---
 
-## Effectの分類
+## Classification
 
-Effectは3系統に分かれ、**宣言される場所と語彙が系統ごとに異なる**。
+Effects fall into three families, and **where they are declared and what
+vocabulary they use differs per family.**
 
-### State Effects — `reads` / `mutates` / `creates` / `deletes`
+### State effects — `reads` / `mutates` / `creates` / `deletes`
 
 ```text
 Read<User, user::Name>
@@ -27,7 +31,7 @@ Create<AuditLog>
 Delete<Session>
 ```
 
-### External Effects — `emits` / `calls`
+### External effects — `emits` / `calls`
 
 ```text
 Emit<UserUpdated>
@@ -35,7 +39,7 @@ Call<EmailService>
 Call<PaymentService>
 ```
 
-### Infrastructure Effects — `effects`（差分のみ）
+### Infrastructure effects — `effects` (deltas only)
 
 ```text
 DatabaseRead
@@ -52,15 +56,20 @@ Time
 Spawn<Job>
 ```
 
-> **語彙は閉じている。** 上記以外のInfrastructure Effect名を使ってはならない。
+> **The vocabulary is closed.** No infrastructure effect name outside that list
+> may be used.
 >
-> 特に `SendEmail` / `MessagePublish` / `ExternalMutation` は**Infrastructure Effectではない**。これらは External Effect であり `calls = [EmailService]` / `emits = [X]` で表現する。同じ副作用に2つの宣言経路を作ると、AIがどちらを書くべきか判定できず、両方書くか片方を落とす。
+> `SendEmail` / `MessagePublish` / `ExternalMutation` in particular are **not
+> infrastructure effects.** They are external effects, expressed as
+> `calls = [EmailService]` / `emits = [X]`. Two declaration routes for the same
+> side effect leave an AI unable to decide which to write, so it writes both or
+> drops one.
 
 ---
 
-## 決定1: Effectカテゴリを分けて宣言する
+## Decision 1: declare effects split by category
 
-統一された `effects = [...]` ではなく、カテゴリ別の属性キーを持つ。
+Rather than a unified `effects = [...]`, there is an attribute key per category.
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[contract(
@@ -71,11 +80,12 @@ Spawn<Job>
 )]
 ```
 
-deriveがカテゴリ別のassociated typeに展開する（cons list表現）。
+The derive expands them into per-category associated types (in cons-list form).
 
 ```rust
-// `mutates` の Field は自動的に `reads` に含まれる（[`read-contract.md`](./read-contract.md)）。
-// 宣言は reads=[id, status] の2つだが、展開後は name / email が加わって4要素になる。
+// A field in `mutates` is automatically included in `reads`
+// ([`read-contract.md`](./read-contract.md)). The declaration names two —
+// reads=[id, status] — but after expansion name and email join them, making four.
 type Reads   = (Read<User, user::Id>,
                (Read<User, user::Status>,
                (Read<User, user::Name>,
@@ -87,45 +97,59 @@ type Emits   = (Emit<UserUpdated>, ());
 type Calls   = ();
 ```
 
-> cons list（`(A, (B, ()))`）である理由: フラットタプル `(A, B)` では所属判定のimplがcoherence違反になる。[`rust-type-model.md`](./rust-type-model.md) を参照。
+> Why a cons list (`(A, (B, ()))`): with flat tuples `(A, B)` the membership impls
+> violate coherence. See [`rust-type-model.md`](./rust-type-model.md).
 
-### 理由
+### Why
 
-単一Effectの所属判定については、統一案とカテゴリ別案で**強制力は完全に同一**である。差が出るのは以下。
+For deciding a single effect's membership, the unified and per-category designs
+have **exactly the same enforcement power.** The differences are these.
 
-#### (a) 「不在」の表明 — 決定的な差
+#### (a) Stating an absence — the decisive difference
 
-GETのread-only保証は「Mutationを1つも持たない」という表明である。
+A GET's read-only guarantee is the statement "it holds no mutation at all".
 
 ```rust
 trait ReadOnly: Endpoint<Mutates = (), Creates = (), Deletes = ()> {}
 ```
 
-associated **type** equality bound は stable で、エラーも明快になる。
+An associated-**type** equality bound is stable, and the error is clear.
 
 ```text
 expected unit type `()` found tuple `(Mutate<User, user::Email>, ())`
 ```
 
-統一案では「Mutateを含まないこと」を要求する必要があるが、Rustには**negative trait boundが存在しない**（`!Trait` はunstable、型パラメータのワイルドカードも書けない）。型レベルBoolによる畳み込みで代替可能だが、エラーが「どの要素が原因か分からない」形に悪化する。
+The unified design would have to require "contains no Mutate", and Rust has **no
+negative trait bounds** (`!Trait` is unstable, and a wildcard over a type
+parameter cannot be written). A fold over type-level booleans is an alternative,
+but it degrades the error into a form that does not say **which element caused
+it.**
 
-#### (b) Repositoryへの受け渡し
+#### (b) Handing effects to a repository
 
-カテゴリ別なら分類済みの型をそのまま渡せる。統一案では `Effects` からMutateだけを取り出す型レベル `Filter` が必要になり、**catch-all implが必ず衝突する**（[`rust-type-model.md`](./rust-type-model.md)）。
+Split by category, the already-classified type can be passed straight through.
+The unified design needs a type-level `Filter` to extract only the mutations from
+`Effects`, and **the catch-all impl always collides**
+([`rust-type-model.md`](./rust-type-model.md)).
 
-#### (c) trait解決コスト
+#### (c) Trait-resolution cost
 
-`Has<Set, Elem, Idx>` は要素数に線形。カテゴリ別なら短いcons list（3-4要素）を走査、統一案なら全Effect（10-15要素）を走査する。
+`Has<Set, Elem, Idx>` is linear in the element count. Split by category it scans
+a short cons list (3–4 elements); unified it scans every effect (10–15).
 
-#### (d) AIの書きやすさ
+#### (d) Ease of writing for an AI
 
-カテゴリ別のキー名は**構造化された穴埋め**になる。統一案は自由記述に近く、抜けが出やすい。
+Per-category key names make it **a structured fill-in-the-blanks.** The unified
+form is closer to free text, and things get left out.
 
-### GET ⇒ ReadOnly の強制方法
+### How GET ⇒ ReadOnly is enforced
 
-`impl<E: Endpoint<Method = Get>> ReadOnly for E {}` は**書けない**。`ReadOnly` が `Mutates = ()` をsupertraitに持つため、blanket impl側でもそれを要求せざるを得ず、Methodについて何も強制しなくなる（実コンパイルで確認済み）。
+`impl<E: Endpoint<Method = Get>> ReadOnly for E {}` **cannot be written.**
+`ReadOnly` has `Mutates = ()` as a supertrait, so the blanket impl must require
+it too, at which point it enforces nothing about `Method` (confirmed by
+compiling).
 
-deriveが生成するコンパイル時アサーションで強制する。
+It is enforced by a compile-time assertion the derive generates.
 
 ```rust
 const _: () = {
@@ -134,52 +158,57 @@ const _: () = {
 };
 ```
 
-加えて、proc macroが展開時点で「GETなのにmutates/creates/deletesがある」を弾く（エラーが最も精密になる）。詳細は [`rust-type-model.md`](./rust-type-model.md)。
+On top of that, the proc macro rejects "a GET with mutates/creates/deletes" at
+expansion time, which gives the most precise error. Detail in
+[`rust-type-model.md`](./rust-type-model.md).
 
-### 統一ビュー（将来）
+### A unified view (later)
 
-横断的な用途のために、deriveが全カテゴリの連結も生成できる。利用者は書かない。**First PoCでは不要。**
+For cross-cutting uses, the derive can also generate the concatenation of every
+category. Users do not write it. **Not needed in the First PoC.**
 
 ---
 
-## 決定2: Infrastructure Effectは「Methodデフォルト + 差分」
+## Decision 2: infrastructure effects are "a per-method default plus a delta"
 
-### フレームワークが持つデフォルト
+### The framework's defaults
 
 ```text
 GET / HEAD  → DatabaseRead, CacheRead, Logging, Metrics, Tracing
-POST        → 上記 + DatabaseMutation
-PUT / PATCH → 上記 + DatabaseMutation
-DELETE      → 上記 + DatabaseMutation
+POST        → the above + DatabaseMutation
+PUT / PATCH → the above + DatabaseMutation
+DELETE      → the above + DatabaseMutation
 ```
 
-### Endpoint側は逸脱のみ宣言
+### An endpoint declares only its deviations
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[contract(
     mutates = [User::email],
-    effects = [+CacheWrite],     // 追加
+    effects = [+CacheWrite],     // added
 )]
 
 #[contract(
     reads   = [User::id],
-    effects = [-CacheRead],      // 明示的に禁止
+    effects = [-CacheRead],      // explicitly forbidden
 )]
 ```
 
-### 理由
+### Why
 
-| 案 | 評価 |
+| Option | Assessment |
 |---|---|
-| 全Effect明示 | Endpointごとに8-10行の定型句。token効率が悪化し、**書き忘れと意図的な非宣言が区別できない** |
-| Infrastructure宣言不要 | Contractは読みやすいが、「このEndpointがキャッシュを書くか」が消え、意図的にLoggingしないEndpointを表現できない |
-| **デフォルト + 差分** | **書く側は短く、読む側は完全形** |
+| Declare every effect | 8–10 lines of boilerplate per endpoint. Token efficiency suffers, and **forgetting to declare is indistinguishable from deliberately not declaring** |
+| No infrastructure declaration | The contract reads well, but "does this endpoint write to the cache" disappears, and an endpoint that deliberately does not log cannot be expressed |
+| **Default plus delta** | **Short to write, complete to read** |
 
-### 重要な制約: Infrastructure Effect は型で強制されない
+### An important limit: infrastructure effects are not enforced by types
 
-Methodデフォルト表は**単なるドキュメントの表であり、型検査はゼロ**である。`effects = [+CacheWrite]` を書かずに `ctx.cache()` を呼んでも、現状の設計では止まらない。
+The per-method default table is **a documentation table with zero type
+checking.** Calling `ctx.cache()` without writing `effects = [+CacheWrite]` is not
+stopped by the current design.
 
-したがってAI Contextには `enforcement: "none"` を明記する。
+So the AI Context states `enforcement: "none"` explicitly.
 
 ```json
 "effects": {
@@ -189,25 +218,35 @@ Methodデフォルト表は**単なるドキュメントの表であり、型検
 }
 ```
 
-**強制レベルの差を隠さないことが、この設計を採る条件である。** [`ai-context.md`](./ai-context.md) を参照。
+**Not hiding the difference in enforcement level is the condition on which this
+design is adopted.** See [`ai-context.md`](./ai-context.md).
 
-> この軸は「概念あたりの強制力」が全Contract項目中で最も低い。将来 `ctx.cache()` のwhere節で強制するか、この軸自体を捨てるかの判断が必要。[`research-questions.md`](./research-questions.md) に記録。
+> This axis has the lowest enforcement per concept of any contract item. A
+> decision is needed later: enforce it in `ctx.cache()`'s where clause, or drop the
+> axis. Recorded in [`research-questions.md`](./research-questions.md).
 
-### 書く側と読む側の分離について
+### On separating the writing side from the reading side
 
-ソース上のContractは差分、AI Contextは完全形とすることで token効率とExplicit Effectsを両立させる。ただしこれは**「ソース単体では完全な意味が読めない」ことを受け入れる**判断である。
+The contract in the source is a delta and the AI Context is the complete form,
+which reconciles token efficiency with explicit effects. But this is a decision
+to **accept that the source alone does not carry the complete meaning.**
 
-`../concepts.md` の信頼順位（Type/Contract → ... → Generated Documentation）において、**AIに読ませたい完全形は生成物側にある**。この矛盾を認識し、生成物の鮮度保証（CIでの再生成 + 差分ゼロ検査）を仕様に含める必要がある。
+In `../concepts.md`'s trust ordering (type/contract → … → generated
+documentation), **the complete form intended for an AI sits on the generated
+side.** That tension has to be acknowledged, and freshness of the generated output
+— regeneration in CI plus a zero-diff check — has to be part of the
+specification.
 
 ---
 
-## GET / Immutability Guarantee
+## GET and the immutability guarantee
 
-GET Endpointについて、
+For a GET endpoint,
 
-> GETなら必ずImmutableである
+> a GET is always immutable
 
-を型レベルで保証する。ただし「Immutable」の定義を慎重にする。GETでも Logging / Metrics / Tracing / CacheRead / CacheWrite は発生し得る。
+is guaranteed at the type level. But "immutable" is defined carefully: a GET can
+still cause Logging, Metrics, Tracing, CacheRead and CacheWrite.
 
 ```text
 GET User
@@ -216,43 +255,49 @@ Allowed:
     DatabaseRead / CacheRead / Metrics / Logging / Tracing
 
 Forbidden:
-    DatabaseMutation / MessagePublish（= emits）/ ExternalMutation（= calls）/ FileWrite
+    DatabaseMutation / MessagePublish (= emits) / ExternalMutation (= calls) / FileWrite
 ```
 
-### 重要な言い換え
+### An important restatement
+
+Not
 
 ```text
-GETだから副作用がない
+a GET has no side effects
 ```
 
-ではなく、
+but
 
 ```text
-GET Endpointには Mutation Capability が存在しない
+a GET endpoint has no mutation capability
 ```
 
-### 保証の範囲は「ハンドラスコープ」
+### The guarantee's scope is the handler
 
-**MiddlewareがContractを持たない限り、この保証はリクエストスコープでは成立しない。**
+**Unless middleware carries a contract, this guarantee does not hold at request
+scope.**
 
 ```text
-Auth Middleware が last_login_at を更新する場合:
-  ハンドラスコープ  : Mutates = () → read-only（真）
-  リクエストスコープ: User.last_login_at が更新される（偽）
+If auth middleware updates last_login_at:
+  handler scope : Mutates = () → read-only (true)
+  request scope : User.last_login_at is updated (false)
 ```
 
-AI Contextに `scope_of_readonly_guarantee: "handler_only"` として明示する。Middleware Contractを導入した時点で `"request"` に昇格させる。[`unverified-boundaries.md`](./unverified-boundaries.md) を参照。
+Stated in the AI Context as
+`scope_of_readonly_guarantee: "handler_only"`. It is promoted to `"request"` once
+middleware contracts are introduced. See
+[`unverified-boundaries.md`](./unverified-boundaries.md).
 
 ---
 
-## 型レベルの制約
+## Type-level constraints
 
-| 演算 | 可否 |
+| Operation | Allowed? |
 |---|---|
-| `Has<Set, Elem, Idx>` — 単一要素の所属判定 | 安全（線形） |
-| `Append<A, B>` — cons listの連結 | 安全 |
-| `Lookup<Set, Key, Idx>` — 型レベルmap検索 | 安全 |
-| `Subset<A, B>` / `Filter<Set, Pred>` | **避ける** |
-| negative reasoning | **不可** |
+| `Has<Set, Elem, Idx>` — membership of a single element | Safe (linear) |
+| `Append<A, B>` — concatenating cons lists | Safe |
+| `Lookup<Set, Key, Idx>` — a type-level map lookup | Safe |
+| `Subset<A, B>` / `Filter<Set, Pred>` | **Avoid** |
+| Negative reasoning | **Impossible** |
 
-詳細は [`rust-type-model.md`](./rust-type-model.md) を参照。
+Detail in [`rust-type-model.md`](./rust-type-model.md).

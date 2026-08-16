@@ -1,43 +1,50 @@
-# Read Contract
+# Read contract
 
-`reads` 宣言を型で強制する。[`mutation-contract.md`](./mutation-contract.md) と対称の仕組み。
+Enforcing the `reads` declaration in types. The mirror image of
+[`mutation-contract.md`](./mutation-contract.md).
 
-関連: [`mutation-contract.md`](./mutation-contract.md) / [`unverified-boundaries.md`](./unverified-boundaries.md) / [`ai-context.md`](./ai-context.md)
+Related: [`mutation-contract.md`](./mutation-contract.md),
+[`unverified-boundaries.md`](./unverified-boundaries.md),
+[`ai-context.md`](./ai-context.md).
 
 ---
 
-## 解決する問題
+## The problem
 
-`reads` を宣言しても、Repositoryが Domain Model 全体を返すなら、その宣言は**実質的に効いていない**。
+Declaring `reads` achieves **nothing in practice** if the repository hands back
+the whole domain model.
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[contract(reads = [User::id, User::name, User::email, User::status])]
 pub struct GetUser;
 
 let user = ctx.users().find(req.id).await?;
-user.password()   // ← 宣言していないが読めてしまう
+user.password()   // ← undeclared, and readable anyway
 ```
 
-この状態では `reads` は Metadata に過ぎず、[`../concepts.md`](../concepts.md) が否定した「コメント同然の仕様」になる。
+In that state `reads` is only metadata — the "specification that is no better
+than a comment" [`../concepts.md`](../concepts.md) rejects.
 
 ---
 
-## 決定: Projection型で強制する
+## Decision: enforce it with a projection type
 
-`find()` は Domain Model 全体ではなく、**宣言されたFieldのみを読めるProjection**を返す。
+`find()` returns not the whole domain model but **a projection that can only read
+the declared fields.**
 
 ```rust,ignore   // fragment, not a complete item
 let user = ctx.users().find(req.id).await?;
-// 型: Projection<User, (user::Id, (user::Name, (user::Email, (user::Status, ()))))>
+// type: Projection<User, (user::Id, (user::Name, (user::Email, (user::Status, ()))))>
 
-user.name()       // ✅ OK
+user.name()       // ✅ fine
 ```
 
 ```rust,compile_fail
-user.password()   // ❌ 型エラー
+user.password()   // ❌ type error
 ```
 
-Projection のgetterは、拡張trait内でフィールドごとに `where` 節付きメソッドを並べる形で実装する（実コンパイルで確認済み）。
+A projection's getters are implemented as per-field methods with `where` clauses
+inside an extension trait (confirmed by compiling).
 
 ```rust,ignore   // fragment, not a complete item
 pub trait UserProjection<F> {
@@ -48,60 +55,78 @@ pub trait UserProjection<F> {
 impl<F> UserProjection<F> for Projection<User, F> { ... }
 ```
 
-> `Projection` はフレームワーク型なので inherent impl は書けない（E0116）。拡張trait化が必須。[`rust-type-model.md`](./rust-type-model.md) を参照。
+> `Projection` is a framework type, so an inherent impl cannot be written
+> (E0116). The extension trait is required. See
+> [`rust-type-model.md`](./rust-type-model.md).
 
 ---
 
-## 得られる価値
+## What this buys
 
-### 1. Contract全体が信頼できる
+### 1. The whole contract becomes trustworthy
 
-`mutates` だけが型で効いて `reads` が効かない状態は、Contractの信頼性を部分的に損なう。AIは「どの宣言が本物か」を判断できない。
+A state where `mutates` is enforced by types and `reads` is not damages the
+contract's credibility in part, and an AI cannot tell **which declarations are
+real**.
 
-### 2. 個人情報の読み取り範囲を型で制限できる
+### 2. Reading of personal data can be limited in types
 
 ```rust,ignore   // needs a macro that arrives in M2
-#[contract(reads = [User::id, User::name])]   // password / email に触れない
+#[contract(reads = [User::id, User::name])]   // password and email are out of reach
 pub struct GetUserPublicProfile;
 ```
 
-> **ただしデータ最小化の保証ではない。** Projectionは**コンパイル時のマスクであり、データ上のマスクではない**。SELECT句生成が実装されるまで `find()` は `SELECT *` 相当であり、password ハッシュはメモリ上に存在する。
+> **This is not a data-minimisation guarantee.** A projection is **a mask at
+> compile time, not a mask on the data.** Until SELECT-clause generation is
+> implemented, `find()` is equivalent to `SELECT *` and the password hash is in
+> memory.
 >
-> したがって:
-> - `Projection` に `Debug` / `Serialize` を derive しない（宣言Fieldのみを出す独自実装をderive生成する）
-> - Domain への `Deserialize` を禁止する（任意値でのDomain構築を防ぐ）
-> - GDPR等のデータ最小化への「機械的な裏付け」という主張は、SELECT句生成が入るまで**しない**
+> Therefore:
+> - Do not derive `Debug` or `Serialize` on a `Projection` — the derive emits an
+>   implementation printing declared fields only.
+> - Forbid `Deserialize` on a domain, to prevent constructing one from arbitrary
+>   values.
+> - **Do not claim** mechanical backing for GDPR-style data minimisation until
+>   SELECT-clause generation exists.
 
-### 3. SELECT句の最適化に使える
+### 3. It can drive SELECT-clause optimisation
 
-宣言されたFieldが分かるため、Repository実装（derive生成時）が `SELECT id, name FROM users` を生成できる。
+Because the declared fields are known, the generated repository implementation
+can emit `SELECT id, name FROM users`.
 
 ---
 
-## 複雑さのトレードオフ
+## The complexity trade-off
 
-| コスト | 内容 | 緩和策 |
+| Cost | Detail | Mitigation |
 |---|---|---|
-| Field アクセスがメソッドになる | `user.name` ではなく `user.name()` | Domainも不透明型なので一貫する（[`mutation-contract.md`](./mutation-contract.md)） |
-| Response変換が煩雑になる | `UserView::from(user)` が Projection を受け取る | `#[derive(View)]` で変換を生成 |
-| 型が長くなる | cons list が展開される | deriveが型エイリアスを生成 |
-| setter シグネチャへの影響 | `set_email` が `&mut Projection<User, F>` を取る形になる | **Full PoC での作業として明記**（下記） |
+| Field access becomes a method | `user.name()` rather than `user.name` | Consistent with the domain, which is opaque anyway ([`mutation-contract.md`](./mutation-contract.md)) |
+| Response conversion gets fiddly | `UserView::from(user)` receives a projection | `#[derive(View)]` generates the conversion |
+| Types get long | The cons list is spelled out | The derive generates type aliases |
+| It changes setter signatures | `set_email` comes to take `&mut Projection<User, F>` | **Recorded explicitly as Full PoC work** (below) |
 
-### `into_owned()` は提供しない
+### `into_owned()` is not provided
 
-当初「既存コードとの相互運用」の緩和策として `into_owned()`（Projection から生 `User` を取り出す）を挙げていたが、**削除した**。
+It was originally listed as a mitigation for interoperating with existing code —
+extracting a bare `User` out of a projection — and has been **removed.**
 
-理由: 取り出した瞬間にread制約が消える。しかも「Contractに記録する」と書いたが、**メソッド呼び出しが自分自身を属性マクロに記録する手段は存在しない**。
+The reason: the read constraint disappears the moment it is extracted. And while
+the text said "it is recorded in the contract", **there is no mechanism by which
+a method call records itself into an attribute macro.**
 
-**設計者が「ここが一番つらい」と認めた場所に脱出口を置くと、そこが例外ではなく主要動線になる。** どうしても必要な場合は、属性マクロが生成するZST証拠を引数で要求する形にして、記録漏れを構造的に防ぐ。
+**Putting an escape hatch exactly where the designer admits the design hurts most
+turns that hatch into the main route rather than the exception.** If it becomes
+genuinely necessary, require a ZST proof produced by an attribute macro as an
+argument, so the recording cannot be skipped.
 
 ```rust,ignore   // fragment, not a complete item
-fn into_owned(self, proof: EscapeHatchProof) -> User;   // 属性なしでは呼べない
+fn into_owned(self, proof: EscapeHatchProof) -> User;   // uncallable without the attribute
 ```
 
-### Mutation との組み合わせ
+### Interaction with mutation
 
-`mutates` に宣言したFieldは、変更前の値を読む必要があるため**自動的に `reads` に含まれる**。
+A field declared in `mutates` needs its previous value read, so it is
+**automatically included in `reads`.**
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[contract(
@@ -111,30 +136,44 @@ fn into_owned(self, proof: EscapeHatchProof) -> User;   // 属性なしでは呼
         mutates = [User::email],
     },
 )]
-// 実効的な read 集合: id, status, name, email
+// effective read set: id, status, name, email
 ```
 
-**`when` 内の `mutates` も自動的に `reads` に含まれる。** 条件成立時に変更前の値を読む必要があるため。ただし読み取り権限はスコープを問わず有効とする（条件下でのみ読めるという制約は、`when` の内側で `find` を呼び直す必要が生じ、実用性を損なうため設けない）。
+**A `mutates` inside `when` is included in `reads` too**, since the previous
+value has to be read when the condition holds. Read permission is valid
+regardless of scope: constraining reads to the condition would force a second
+`find` inside the `when` block, which costs more than it is worth.
 
-Projection導入時、setterのシグネチャは `&mut User` から `&mut Projection<User, F>` に変わる。First PoC（Projection なし）と Full PoC でシグネチャが変わることを明記する。
+When projections arrive, setter signatures change from `&mut User` to
+`&mut Projection<User, F>`. The signature differing between the First PoC (no
+projections) and the Full PoC is stated here deliberately.
 
 ---
 
-## PoCでの扱い
+## Treatment in the PoC
 
-**First PoCでは Projection を実装しない。**
+**Projections are not implemented in the First PoC.**
 
-理由:
+Reasons:
 
-- First PoCの証明対象は「GETがMutateを呼べない」の1点
-- Projection は Mutation Contract の型設計が固まってから対称的に作る方が早い
-- Domain不透明化（privateフィールド + Capability付きgetter）だけでも、宣言外Fieldの**読み取り**は制限できる可能性がある（getterのwhere節で `Reads` を検査すれば、Projection型なしで同じ効果が得られるか要検証）
+- The First PoC proves one thing: that a GET cannot call a mutation.
+- Projections are faster to build symmetrically, once the mutation contract's
+  type design has settled.
+- Domain opacity alone — private fields plus capability-checked getters — may
+  already restrict **reading** an undeclared field. Whether checking `Reads` in a
+  getter's where clause achieves the same effect without a projection type needs
+  measuring.
 
-### 段階差を隠さない
+### Do not hide the gap between stages
 
-`reads` が当面 Metadata のみであることを AI Context に明示する。
+The AI Context states that `reads` is metadata only for now.
 
-> **Capability 付き getter が `reads` の強制になるかは測定していない。** 生成されること自体は決まっているが、それが宣言外 Field の読み取りをコンパイルエラーにするかは #15 / T-M1-03 の対象で、未実施である。ここで `metadata_only` と出すのは**弱い側の主張を選んでいる**からであって、getter に効果が無いと確かめたからではない。経緯は [ADR-0004](../adr/0004-reads-enforcement-level.md)。
+> **Whether capability-checked getters amount to enforcing `reads` has not been
+> measured.** That they are generated is settled; whether they turn reading an
+> undeclared field into a compile error is the subject of #15 / T-M1-03, which
+> has not run. Emitting `metadata_only` here is **choosing the weaker claim**, not
+> a finding that the getters have no effect. The account is in
+> [ADR-0004](../adr/0004-reads-enforcement-level.md).
 
 ```json
 {
@@ -149,18 +188,27 @@ Projection導入時、setterのシグネチャは `&mut User` から `&mut Proje
 }
 ```
 
-Full PoC で `reads` が `upper_bound_checked` に昇格する。
+`reads` is promoted to `upper_bound_checked` in the Full PoC.
 
-> `type_checked` という値は使わない。Contractは「実装 ⊆ 契約」の上界検査であり、双方向の検証ではない。[`effect-inference.md`](./effect-inference.md) を参照。
+> The value `type_checked` is never used. A contract is an upper-bound check —
+> implementation ⊆ contract — not a bidirectional verification. See
+> [`effect-inference.md`](./effect-inference.md).
 
 ---
 
-## 未解決の課題
+## Open problems
 
-- **一覧取得** — `find(id) -> Projection<User, F>` の形しか定義されていない。`Vec<Projection<..>>` を返す一覧APIと、そこでのページネーション / ソート / 動的フィルタの表現
-- **集計** — COUNT / SUM / GROUP BY は特定Fieldの値ではなく、結果はどのDomainインスタンスにも属さない
-- **JOIN** — `Projection<Domain, Fields>` は単一Domain。複合Projection（`Projection<(User, Order), (..)>`）が未定義
-- **N+1 / eager loading** — Field単位メソッド（Rule 1）と構造的に衝突する
-- Domain不透明化のgetterだけで `reads` 強制が足りるか（Projection型が不要になる可能性）
+- **Listing.** Only the `find(id) -> Projection<User, F>` shape is defined. A
+  listing API returning `Vec<Projection<..>>`, and how pagination, sorting and
+  dynamic filtering are expressed there.
+- **Aggregation.** COUNT, SUM and GROUP BY are not the value of a particular
+  field, and the result belongs to no domain instance.
+- **JOIN.** `Projection<Domain, Fields>` covers one domain. A composite
+  projection (`Projection<(User, Order), (..)>`) is undefined.
+- **N+1 and eager loading.** These collide structurally with per-field methods
+  (Rule 1).
+- Whether domain opacity's getters alone suffice to enforce `reads`, which would
+  make the projection type unnecessary —
+  [ADR-0004](../adr/0004-reads-enforcement-level.md).
 
-[`research-questions.md`](./research-questions.md) を参照。
+See [`research-questions.md`](./research-questions.md).

@@ -24,7 +24,8 @@ impl<'req, E: Endpoint> Ctx<'req, E> {
 }
 ```
 
-> 利用者は `Runtime<Sealed>` を構築できないため、任意のEndpoint型で `Ctx` を作れない。
+> A user cannot construct a `Runtime<Sealed>`, so they cannot make a `Ctx` for an
+> arbitrary endpoint type.
 
 **Neither `Runtime` nor `Sealed` is declared.** `grep 'struct Runtime' docs/`
 returns nothing, and the `...` in the signature is never expanded. This is ledger
@@ -114,7 +115,7 @@ that touches the runtime, not one for the constructor alone.
 ## More Information
 
 * `docs/specs/unverified-boundaries.md` path 9
-* `docs/specs/capability-system.md` §構築経路をsealedにする
+* `docs/specs/capability-system.md` §Seal the construction route
 * `docs/rules/test.md` §4 — the sanctioned test path
 * `spikes/ctx-lifetime-rpitit/README.md` — probe A0, and what it does not cover
 * [ADR-0005](./0005-repo-handle-shape.md) — the same "undeclared type carrying a guarantee" one level down

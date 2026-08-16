@@ -1,52 +1,66 @@
-# Handler Rules
+# Handler rules
 
-ハンドラ実装の規約。**「実装を見ればEndpointの処理が自明である」ことを担保する仕組み。**
+The conventions for implementing a handler. **The mechanism that keeps "reading
+the implementation makes the endpoint's behaviour self-evident" true.**
 
-関連: [`capability-system.md`](./capability-system.md) / [`unverified-boundaries.md`](./unverified-boundaries.md) / [`persistence.md`](./persistence.md)
+Related: [`capability-system.md`](./capability-system.md),
+[`unverified-boundaries.md`](./unverified-boundaries.md),
+[`persistence.md`](./persistence.md).
 
 ---
 
-## 設計判断の背景
+## Background to the decision
 
-Capabilityトークンをハンドラ内でどう受け渡すかを検討した結果、**Context経由（暗黙）**を採用した。
+After considering how a capability token should be passed around inside a
+handler, **passing it through the context (implicitly)** was chosen.
 
 ```rust,ignore   // fragment, not a complete item
-// 採用: Context 経由
+// chosen: through the context
 ctx.users().set_email(&mut user, req.email)?;
 
-// 却下: 明示引数
+// rejected: an explicit argument
 ctx.users().set_email(&mut user, req.email, caps.mutate::<user::Email>())?;
 ```
 
-却下理由は「長いから」ではない。**明示引数が追加している情報 `user::Email` は、`set_email` という名前から既に自明**であり、長さは増えるが情報は増えないため。
+The rejection is not because it is long. It is because **the information the
+explicit argument adds — `user::Email` — is already obvious from the name
+`set_email`**: it adds length without adding information.
 
-ただし、これは**Context経由でも自明性が保たれる場合に限って成立する**。自明性はCapabilityトークンの有無ではなく、APIの形で決まる。したがって以下3つのルールを仕様として定める。
+That reasoning **holds only where the context route preserves self-evidence.**
+Self-evidence is determined by the shape of the API, not by the presence of a
+capability token. The following three rules are therefore part of the
+specification.
 
-> **ルールが守られない場合、Context経由の設計は自明性を失う。** この3つはオプションではなく、Capability設計の前提条件である。
+> **If the rules are not kept, the context-passing design loses its
+> self-evidence.** These three are not optional; they are preconditions of the
+> capability design.
 
 ---
 
-## Rule 1 — Repositoryは Field 単位のメソッドのみを持つ
+## Rule 1 — a repository has per-field methods only
 
 ```rust,ignore   // fragment, not a complete item
-// ✅ 提供する
-ctx.users().set_email(&mut user, v)?;   // 何が変わるか自明
+// ✅ provided
+ctx.users().set_email(&mut user, v)?;   // what changes is obvious
 ctx.users().set_name(&mut user, v)?;
 ctx.users().set_status(&mut user, v)?;
 ```
 
 ```rust,compile_fail
-// ❌ 提供しない
-ctx.users().save(&mut user)?;            // 何が変わったか不明
-ctx.users().update(&mut user, patch)?;   // 同上
-ctx.users().apply(&mut user, changes)?;  // 同上
+// ❌ not provided
+ctx.users().save(&mut user)?;            // what changed is unknown
+ctx.users().update(&mut user, patch)?;   // ditto
+ctx.users().apply(&mut user, changes)?;  // ditto
 ```
 
-包括メソッドを許すと、Contractに `mutates = [name, email]` と書いてあっても、**実装のどの行で何が変わるかが読めない**。
+Allow a blanket method, and even with `mutates = [name, email]` written in the
+contract, **which line changes what cannot be read off the implementation.**
 
-### `&mut User` を渡してよい理由
+### Why `&mut User` may be passed
 
-Domainは不透明型（privateフィールド）として公開される（[`mutation-contract.md`](./mutation-contract.md)）。したがって `&mut User` を保持していても直接代入はできない。
+A domain is exposed as an opaque type with private fields
+([`mutation-contract.md`](./mutation-contract.md)), so holding a `&mut User` does
+not permit direct assignment.
 
 ```rust,ignore   // fragment, not a complete item
 ctx.users().set_email(&mut user, req.email)?;   // ✅
@@ -56,59 +70,69 @@ ctx.users().set_email(&mut user, req.email)?;   // ✅
 user.email = req.email;                          // ❌ private field
 ```
 
-**Domainが `pub` フィールドを持つ形では、このルールは無意味になる。** deriveが `pub` を拒否することがRule 1の前提条件である。
+**With a domain that has `pub` fields this rule is meaningless.** The derive
+rejecting `pub` is Rule 1's precondition.
 
-### Read側の例外（未解決）
+### The exception on the read side (unresolved)
 
-N+1回避（eager loading）はField単位メソッドと構造的に衝突する。「Userを100件取得し、それぞれのOrder件数も返す」を1メソッドで書くと、Rule 1が拒否する包括メソッドと形が似る。
+Avoiding N+1 (eager loading) collides structurally with per-field methods.
+Writing "fetch 100 users and return each one's order count" as a single method
+looks much like the blanket methods Rule 1 rejects.
 
-Read側のみ「宣言されたFieldの組み合わせに限り複合クエリを許可する」例外規定が必要になる見込み。[`research-questions.md`](./research-questions.md) を参照。
+An exception is likely to be needed on the read side alone: "a composite query is
+permitted, limited to combinations of declared fields". See
+[`research-questions.md`](./research-questions.md).
 
 ---
 
-## Rule 2 — Effectを起こす操作は必ず `ctx` 経由
+## Rule 2 — every effect-causing operation goes through `ctx`
 
 ```text
-ctx.users()      → State Effect (Read / Mutate / Delete)
+ctx.users()      → state effect (Read / Mutate / Delete)
 ctx.audit_logs() → Create
 ctx.events()     → Emit
-ctx.email()      → External Effect
-ctx.cache()      → Infrastructure Effect
+ctx.email()      → external effect
+ctx.cache()      → infrastructure effect
 ctx.spawn()      → Spawn<Job>
 ```
 
-**`ctx.` で始まる行だけを目で追えば、そのハンドラの全Effectが列挙できる**状態を保つ。
+This keeps the state where **following the lines that begin with `ctx.`
+enumerates every effect that handler causes.**
 
-### 型で強制される部分
+### The part enforced by types
 
-| 経路 | 強制手段 |
+| Route | Means of enforcement |
 |---|---|
-| Endpoint構造体に `PgPool` を持って直接SQL | `#[endpoint]` がunit struct以外を拒否 |
-| `tokio::spawn` でCapabilityを持ち出す | `Ctx<'req, E>` が `'static` でない |
-| Serviceに `dyn Repository` を渡す | `dyn Repository` を公開しない |
+| Holding a `PgPool` on the endpoint struct and running SQL directly | `#[endpoint]` rejects anything but a unit struct |
+| Carrying a capability out through `tokio::spawn` | `Ctx<'req, E>` is not `'static` |
+| Passing a `dyn Repository` to a service | `dyn Repository` is not exposed |
 
-### 規約に留まる部分（重要な限界）
+### The part that remains convention (an important limit)
 
-Rule 2の「grepで全Effectが列挙できる」という帰結は、**自由関連関数が純粋であることに依存している**。
+Rule 2's consequence — "grep enumerates every effect" — **depends on free
+associated functions being pure.**
 
 ```rust,compile_fail
 ctx.audit_logs().create(AuditLog::user_updated(&user))?;
-//                      ^^^^^^^^^^^^^^^^^^^^^^ 内部でDBを叩いても検出できない
+//                      ^^^^^^^^^^^^^^^^^^^^^^ hitting the DB in here is undetectable
 ctx.events().emit(UserUpdated::from(&user))?;
 Ok(UserView::from(user))
 ```
 
-以下は**純粋でなければならない**（規約）。
+The following **must be pure** (by convention):
 
-- Contract で宣言された型のコンストラクタ（`AuditLog::user_updated` 等）
+- Constructors of types declared in the contract (`AuditLog::user_updated` and
+  the like)
 - `Condition::holds`
-- View変換（`UserView::from`）
+- View conversions (`UserView::from`)
 
-将来 `#[derive(Event)]` / `#[derive(View)]` でコンストラクタを生成し、手書きの余地を消す。[`unverified-boundaries.md`](./unverified-boundaries.md) #18 として追跡する。
+Eventually `#[derive(Event)]` / `#[derive(View)]` will generate the constructors
+and remove the room for hand-writing them. Tracked as #18 in
+[`unverified-boundaries.md`](./unverified-boundaries.md).
 
 ---
 
-## Rule 3 — 条件付きEffectは `ctx.when::<Cond>` スコープ内でのみ発火
+## Rule 3 — a conditional effect fires only inside a `ctx.when::<Cond>` scope
 
 ```rust,ignore   // fragment, not a complete item
 ctx.when::<EmailChanged, _>(&mut user, &req, async |ctx, user, req| {
@@ -118,11 +142,13 @@ ctx.when::<EmailChanged, _>(&mut user, &req, async |ctx, user, req| {
 }).await?;
 ```
 
-クロージャに渡される `ctx` だけが `EmailVerificationRequested` のCapabilityを持つ。外側の `ctx` は持たないため、スコープ外での発火は型エラーになる。
+Only the `ctx` passed into the closure carries the capability for
+`EmailVerificationRequested`. The outer `ctx` does not, so firing it outside the
+scope is a type error.
 
-### シグネチャ
+### The signature
 
-`user` / `req` は**キャプチャさせず、クロージャの引数として貸す**。
+`user` and `req` are **lent as closure arguments, not captured.**
 
 ```rust,ignore   // fragment, not a complete item
 pub async fn when<C, F>(&self, u: &mut Domain, r: &Req, f: F) -> Result<()>
@@ -131,44 +157,49 @@ where
     F: AsyncFnOnce(Ctx<'_, Extended<E, C>>, &mut Domain, &Req) -> Result<()>;
 ```
 
-- `&user` を渡しつつ `async move` でキャプチャする形は**借用エラーになる**（検証済み: E0382 / E0505）
-- `FnOnce(...) -> Fut` 方式は借用を跨げない（`lifetime may not live long enough`）
-- **Rust 2024 edition の async closure（`AsyncFnOnce`, 1.85+）が必須**
+- Passing `&user` while capturing it in an `async move` **is a borrow error**
+  (verified: E0382 / E0505)
+- The `FnOnce(...) -> Fut` form cannot carry the borrow across
+  (`lifetime may not live long enough`)
+- **Rust 2024 edition async closures (`AsyncFnOnce`, 1.85+) are required**
 
-### 戻り型は `Result<()>` に固定する
+### The return type is fixed to `Result<()>`
 
-そうしないと昇格されたContextをスコープ外へ持ち出せる。
+Otherwise the elevated context can be carried out of the scope.
 
 ```rust,compile_fail
 let elevated = ctx.when::<C, _>(.., async |ctx, ..| Ok(ctx)).await?;
-//                                                   ^^^^^^^ 型エラー
+//                                                   ^^^^^^^ type error
 ```
 
-### 保証されないこと
+### What is not guaranteed
 
-**`Condition::holds` の中身は型で検証できない。**
+**The body of `Condition::holds` cannot be verified in types.**
 
 ```rust
-fn holds(user: &User, req: &Req) -> bool { true }   // 全件無条件化する
+fn holds(user: &User, req: &Req) -> bool { true }   // makes it unconditional
 ```
 
-これは原理的に埋まらない経路であり、AI Contextに `condition_verified: false` として明示する。[`unverified-boundaries.md`](./unverified-boundaries.md) #20 を参照。
+That route cannot be closed in principle, and it is stated in the AI Context as
+`condition_verified: false`. See
+[`unverified-boundaries.md`](./unverified-boundaries.md) #20.
 
 ---
 
-## Rule 4 — 外部Effectはコミット後に発火する
+## Rule 4 — external effects fire after the commit
 
-トランザクション内で取り消せない外部Effect（メール送信・決済・Webhook）を発火してはならない。
+An external effect that cannot be undone — sending mail, taking payment, calling
+a webhook — must not fire inside a transaction.
 
 ```rust,compile_fail
-// ❌ コミット前にメールを送っている
-ctx.users().set_email(&mut user, req.email)?;   // 未コミット
-ctx.email().send_verification(&user).await?;     // 取り消せない
-ctx.audit_logs().create(...)?;                   // この後で失敗しうる
+// ❌ the mail goes out before the commit
+ctx.users().set_email(&mut user, req.email)?;   // not committed
+ctx.email().send_verification(&user).await?;     // cannot be undone
+ctx.audit_logs().create(...)?;                   // this can still fail
 ```
 
 ```rust,ignore   // fragment, not a complete item
-// ✅ コミット後に発火する
+// ✅ fires after the commit
 ctx.users().set_email(&mut user, req.email)?;
 ctx.audit_logs().create(...)?;
 ctx.after_commit(|ctx| async move {
@@ -176,13 +207,17 @@ ctx.after_commit(|ctx| async move {
 }).await?;
 ```
 
-`ctx.after_commit` スコープ内でのみ External Effect のCapabilityを発行する形にすれば、`when` と同じ機構で型強制できる。
+Issuing the capability for an external effect only inside the `ctx.after_commit`
+scope makes this enforceable by the same mechanism as `when`.
 
-> Transaction境界そのものは未設計（[`research-questions.md`](./research-questions.md)）。ただし**サンプルコードは正しい順序で書く**。Verumは「AIが模倣するテンプレート」を提供するフレームワークであり、サンプルが誤った順序を教えると、それがそのまま複製される。
+> The transaction boundary itself is not designed yet
+> ([`research-questions.md`](./research-questions.md)). But **the sample code is
+> written in the correct order.** Verum is a framework that supplies "the template
+> an AI imitates", and a sample teaching the wrong order gets copied as it is.
 
 ---
 
-## 完全な実装例
+## The complete implementation example
 
 ```rust,ignore   // needs a macro that arrives in M2
 #[endpoint(PUT "/users/{id}")]
@@ -233,28 +268,32 @@ impl Handler for UpdateUser {
 }
 ```
 
-### この実装が自明である理由
+### Why this implementation is self-evident
 
-| 読み取れること | 根拠 |
+| What can be read off it | On what basis |
 |---|---|
-| 変更されるFieldは name と email のみ | `set_name` / `set_email` の2行しかない（Rule 1） |
-| **name は無条件、email は条件付き** | Contract の宣言場所（トップレベル vs `when` 内）。`set_email` を `when` の外で呼ぶと型エラー |
-| Effectは全部で6つ | `ctx.` の行を数えれば分かる（Rule 2） |
-| メール送信はコミット後 | `after_commit` ブロック内にある（Rule 4） |
-| status は読むだけ | `set_status` の呼び出しがなく、Contract にも無い |
-| password は触らない | `forbidden` に明示。Capability も存在しない |
+| The only fields changed are name and email | There are only two lines, `set_name` and `set_email` (Rule 1) |
+| **name unconditionally, email conditionally** | Where the contract declares them (top level vs inside `when`). Calling `set_email` outside the `when` is a type error |
+| There are six effects in total | Count the `ctx.` lines (Rule 2) |
+| The mail goes out after the commit | It is inside the `after_commit` block (Rule 4) |
+| status is only read | There is no `set_status` call, and none in the contract |
+| password is untouched | Stated in `forbidden`. No capability exists for it either |
 
-**コメントは1行もない。** これが [`../concepts.md`](../concepts.md) の "semantics without comments" の具体形である。
+**There is not one comment.** This is the concrete form of
+[`../concepts.md`](../concepts.md)'s "semantics without comments".
 
 ---
 
-## ルールの強制状況
+## How far each rule is enforced
 
-| Rule | 強制手段 | 状態 |
+| Rule | Means | State |
 |---|---|---|
-| Rule 1（Field単位メソッド） | Verumが生成する範囲では構造的に保証。Domain不透明化が前提 | 利用者が独自メソッドを足す場合はLint（未実装） |
-| Rule 2（ctx経由） | unit struct強制 / `Ctx<'req>` / `dyn` 非公開 で主要経路を型で塞ぐ | 自由関数コンストラクタの純粋性は**規約** |
-| Rule 3（whenスコープ） | Capabilityをスコープ内でのみ発行。戻り型固定 | `Condition::holds` の中身は**検証不能** |
-| Rule 4（コミット後） | `after_commit` スコープでのみ External Capability 発行 | Transaction設計が未確定 |
+| Rule 1 (per-field methods) | Structurally guaranteed within what Verum generates. Depends on domain opacity | A lint (unimplemented) if the user adds methods of their own |
+| Rule 2 (through ctx) | Unit-struct enforcement / `Ctx<'req>` / no public `dyn` close the main routes in types | The purity of free-function constructors is **convention** |
+| Rule 3 (the when scope) | Capabilities issued only inside the scope. Return type fixed | The body of `Condition::holds` is **unverifiable** |
+| Rule 4 (after the commit) | External capabilities issued only in the `after_commit` scope | The transaction design is undecided |
 
-**規約に留まる部分と型で強制される部分を混同しないこと。** 未検査部分はすべて [`unverified-boundaries.md`](./unverified-boundaries.md) に列挙し、AI Contextに出力する。
+**Do not confuse what is convention with what is enforced by types.** Every
+unchecked part is listed in
+[`unverified-boundaries.md`](./unverified-boundaries.md) and emitted in the AI
+Context.
