@@ -272,8 +272,8 @@ alternative pushes people onto unchecked routes).
 | 15 | A subscriber to `emits` causes arbitrary effects | Require a contract on the subscriber + emit the transitive closure in the AI Context | **Deferred (stated)** |
 | 16 | Middleware effects do not appear in the contract | Require a contract on middleware + have the router compose them | **Deferred (stated)** |
 | 17 | Raw SQL inside a repository implementation | Move the boundary by generating the implementation / an SQL lint | **Deferred (stated)** |
-| 18 | Side effects inside a free-function constructor (`AuditLog::user_updated()` and the like) | Generate the constructors and remove the room for hand-writing | **Deferred (stated)** |
-| 19 | Bypassing field granularity with `creates` + `deletes` (an upsert) | The derive rejects declaring both for one domain / `create` takes new IDs only | **Deferred** |
+| 18 | Side effects inside a free-function constructor (`AuditLog::user_updated()` and the like) — `kind: constructor_body` | Generate the constructors and remove the room for hand-writing | **Deferred (stated)** |
+| 19 | Bypassing field granularity with `creates` + `deletes` (an upsert) — `kind: upsert_granularity` | The derive rejects declaring both for one domain / `create` takes new IDs only | **Deferred (stated)** |
 | 20 | `Condition::holds` unlocks everything by returning `true` | **Impossible in principle** | **Permanently stated** |
 | 22 | **The `observed_effects` scan does not reach a service body** (a consequence of the Q-A decision to scan `handle` only) | Annotate every effect-carrying item and take the transitive closure at build time (a future form). For now, state it with `scope: "handle_only"` and `deferred` | **Stated** (Q-A / 2026-08-15) |
 
@@ -368,62 +368,86 @@ An unchecked boundary is **always** emitted in the AI Context.
 ```json
 {
   "endpoint": "UpdateUser",
-  "scope_of_readonly_guarantee": "handler_only",
-  "unverified_boundaries": [
-    {
-      "kind": "condition_body",
-      "detail": "EmailChanged::holds cannot be verified in types",
-      "location": "src/conditions/user.rs:12",
-      "permanent": true
-    },
-    {
-      "kind": "middleware",
-      "detail": "the effects of the applied middleware are undeclared",
-      "permanent": false
-    },
-    {
-      "kind": "event_subscriber",
-      "detail": "effects on the subscriber side of UserUpdated are unchecked",
-      "permanent": false
-    },
-    {
-      "kind": "repository_impl",
-      "detail": "SQL inside a repository implementation is unchecked",
-      "location": "src/repositories/user.rs",
-      "permanent": false
-    },
-    {
-      "kind": "row_scope",
-      "detail": "row-level permissions are outside the type check; authorisation is separate",
-      "permanent": true
-    },
-    {
-      "kind": "domain_swap",
-      "detail": "*user = other_user holds given a &mut D and cannot be closed (path 2)",
-      "permanent": true
-    },
-    {
-      "kind": "domain_repr",
-      "detail": "a domain's Repr is reachable from anywhere in the same crate; it can be constructed and every field read without a capability (path 21)",
-      "location": "src/domain/user.rs",
-      "permanent": false
-    },
-    {
-      "kind": "malformed_set",
-      "detail": "a malformed effect set can be passed through the capability check (path 14f), limited to bare local types as elements",
-      "permanent": false
-    },
-    {
-      "kind": "service_body",
-      "detail": "the observed_effects scan covers only the inside of handle; effects in a service body do not appear in the lower bound (path 22)",
-      "permanent": false
-    }
-  ]
+  "unverified_boundaries": {
+    "completeness": "best_effort",
+    "entries": [
+      {
+        "kind": "condition_body",
+        "detail": "EmailChanged::holds cannot be verified in types",
+        "location": "src/conditions/user.rs:12",
+        "permanent": true
+      },
+      {
+        "kind": "middleware",
+        "detail": "the effects of the applied middleware are undeclared",
+        "permanent": false
+      },
+      {
+        "kind": "event_subscriber",
+        "detail": "effects on the subscriber side of UserUpdated are unchecked",
+        "permanent": false
+      },
+      {
+        "kind": "repository_impl",
+        "detail": "SQL inside a repository implementation is unchecked",
+        "location": "src/repositories/user.rs",
+        "permanent": false
+      },
+      {
+        "kind": "constructor_body",
+        "detail": "a free-function constructor such as AuditLog::user_updated may cause effects; its purity is convention, not a check (path 18)",
+        "permanent": false
+      },
+      {
+        "kind": "upsert_granularity",
+        "detail": "creates plus deletes on one domain changes field values with no Mutate capability (path 19)",
+        "permanent": false
+      },
+      {
+        "kind": "row_scope",
+        "detail": "row-level permissions are outside the type check; authorisation is separate",
+        "permanent": true
+      },
+      {
+        "kind": "domain_swap",
+        "detail": "*user = other_user holds given a &mut D and cannot be closed (path 2)",
+        "permanent": true
+      },
+      {
+        "kind": "domain_repr",
+        "detail": "a domain's Repr is reachable from anywhere in the same crate; it can be constructed and every field read without a capability (path 21)",
+        "location": "src/domain/user.rs",
+        "permanent": false
+      },
+      {
+        "kind": "malformed_set",
+        "detail": "a malformed effect set can be passed through the capability check (path 14f), limited to bare local types as elements",
+        "permanent": false
+      },
+      {
+        "kind": "service_body",
+        "detail": "the observed_effects scan covers only the inside of handle; effects in a service body do not appear in the lower bound (path 22)",
+        "permanent": false
+      }
+    ]
+  }
 }
 ```
 
 `permanent: true` marks what cannot be closed in principle; `false` marks what
 disappears once the contract is widened.
+
+**`completeness` is `best_effort`, never `exhaustive`.** "We listed every path" is
+not a checkable claim: a path was recorded as closed while it was open **three
+times** (#6 / #8 / #9, all recorded in this file), and a single review added four
+more. The same reasoning that makes `escape_hatches` emit `"unknown"` rather than
+`[]` applies here — an unqualified list reads as a proof of exhaustiveness that
+nobody can supply.
+
+**Each `kind` here is what `enforcement.voided_by` names elsewhere in the same
+output.** That join is the point: a key stating a guarantee points at the entries
+that void it, so a reader who stops at `enforcement` cannot come away believing
+the guarantee is unconditional ([`ai-context.md`](./ai-context.md) §1).
 
 **This output mechanism is implemented from the First PoC.** Added later, it would
 mean every AI Context up to that point had been lying.
@@ -436,28 +460,33 @@ Widening the contract reduces the entries in `unverified_boundaries`. That count
 is the progress metric.
 
 ```text
-First PoC:  3 permanent + 6 non-permanent
-Full PoC:   3 permanent + 3 non-permanent (middleware and events handled)
+First PoC:  3 permanent + 8 non-permanent
+Full PoC:   3 permanent + 5 non-permanent (middleware and events handled)
 Later:      3 permanent + 0 non-permanent
 ```
 
-`permanent` never reaches zero. Not hiding that is this file's purpose.
+`permanent` never reaches zero. Not hiding that is this file's purpose. And the
+count is a floor, not a total — `completeness: "best_effort"` says the list is
+what has been found, so a *rising* count is a review working, not a regression.
 
 > **The counting rule** (stated explicitly because a review noted "the number
 > differs every time it is counted"): count **one-to-one with the entries emitted
-> in the AI Context's `unverified_boundaries`.** permanent 3 = `condition_body`
-> (20) / `row_scope` (row-level permissions) / `domain_swap` (2). non-permanent 6 =
-> `middleware` (16) / `event_subscriber` (15) / `repository_impl` (17) /
+> in the AI Context's `unverified_boundaries.entries`.** permanent 3 =
+> `condition_body` (20) / `row_scope` (row-level permissions) / `domain_swap` (2).
+> non-permanent 8 = `middleware` (16) / `event_subscriber` (15) /
+> `repository_impl` (17) / `constructor_body` (18) / `upsert_granularity` (19) /
 > `domain_repr` (21) / `malformed_set` (14f) / `service_body` (22).
 >
-> **What is not counted is paths 18 and 19, for the same reason** — both carry only
-> a "deferred" label with no `kind` name decided, and neither appears in any
-> sample. This definition previously excluded 19 and counted 18, so **what the
-> definition counted and what was emitted disagreed** (#43 item 8). Decide both.
+> **Paths 18 and 19 were previously uncounted** because neither had a `kind` name
+> decided, and this definition excluded 19 while counting 18 — so what the
+> definition counted and what was emitted disagreed (#43 item 8). Both are now
+> named and emitted, which #38 forced: `enforcement.voided_by` may only name a
+> `kind` that exists, and both paths void `mutates`.
 >
-> These nine entries must **agree as a set** with both this file's sample and
+> These eleven entries must **agree as a set** with both this file's sample and
 > [`ai-context.md`](./ai-context.md)'s. Three places holding different values is
-> why this note was rewritten.
+> why this note was rewritten; `spikes/doc-code-blocks/check_json.py` now makes
+> the agreement mechanical rather than a promise.
 
 ---
 
@@ -473,8 +502,18 @@ GET /users/{id}
   request scope : User.last_login_at is updated (false)
 ```
 
-Stated as `scope_of_readonly_guarantee: "handler_only"`, and promoted to
-`"request"` once middleware contracts are introduced.
+This is stated per key rather than once globally: `mutates`, `creates` and
+`deletes` each carry `enforcement.scope: "handle_via_ctx"` and list `middleware`
+under `voided_by`. When middleware contracts arrive, `middleware` leaves
+`voided_by` and the scope widens.
+
+> **There is no longer a `scope_of_readonly_guarantee` key.** It said exactly what
+> those three keys now say — "all three empty, checked only inside the handler" —
+> and a value derivable from its neighbours is a value that can disagree with them.
+> It also overstated: a GET may still cause Logging, Metrics, Tracing, CacheRead
+> and CacheWrite ([`effect-system.md`](./effect-system.md)), so nothing about it
+> was read-*only*. See
+> [ADR-0008](../adr/0008-guarantees-carry-scope-and-voiding-paths.md).
 
 **Naming a guarantee's scope accurately matters as much as making the guarantee
 stronger.**

@@ -372,7 +372,15 @@ under consideration. Beyond that, compose conditions.
       { "condition": "EmailChanged", "fields": ["User.email"] }
     ],
     "effective": ["User.name", "User.email"],
-    "enforcement": "upper_bound_checked"
+    "enforcement": {
+      "level": "upper_bound_checked",
+      "scope": "handle_via_ctx",
+      "voided_by": [
+        "domain_repr", "domain_swap", "repository_impl", "service_body",
+        "middleware", "constructor_body", "malformed_set",
+        "upsert_granularity", "event_subscriber"
+      ]
+    }
   },
   "conditional": [
     {
@@ -381,7 +389,13 @@ under consideration. Beyond that, compose conditions.
       "condition_verified": false,
       "mutates": ["User.email"],
       "emits":   ["EmailVerificationRequested"],
-      "calls":   ["EmailService"]
+      "calls":   ["EmailService"],
+      "enforcement": {
+        "level": "upper_bound_checked",
+        "scope": "handle_via_ctx",
+        "voided_by": ["repository_impl", "service_body", "middleware",
+                    "constructor_body", "malformed_set", "event_subscriber"]
+      }
     }
   ]
 }

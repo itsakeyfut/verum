@@ -348,12 +348,20 @@ That it is not type-enforced is not hidden.
 ```json
 "forbidden": {
   "fields": ["User.status", "User.password_hash"],
-  "enforcement": "intent_only",
-  "note": "Not type-enforced. Fields absent from `mutates` are already uncallable; this records intent."
+  "enforcement": { "level": "intent_only", "scope": "declaration_only", "voided_by": "not_applicable" },
+  "note": "Records intent. The macro checks only that no field appears in both `mutates` and `forbidden`. A field absent from `mutates` gets no capability, so calling its setter through `ctx` does not compile — but that is `mutates`' guarantee, with `mutates`' scope and `voided_by`, not this key's."
 }
 ```
 
-`enforcement: "intent_only"` distinguishes it from `upper_bound_checked`.
+`level: "intent_only"` distinguishes it from `upper_bound_checked`, and
+`scope: "declaration_only"` names the one thing that *is* checked: the
+`mutates` / `forbidden` overlap, at the macro layer.
+
+> **The note no longer says "already uncallable".** The setter exists — the derive
+> generates one per field — and what fails is its where clause, E0277 rather than
+> E0599 (§MustNotMutate needs no declaration above). Writing "uncallable"
+> contradicted this file two sections earlier, and under ledger path 21 a handler
+> can build a `User` with any `password_hash` without calling a setter at all.
 
 ---
 

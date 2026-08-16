@@ -25,8 +25,9 @@ Format: [MADR 4.0](https://adr.github.io/madr/). Copy
 | [0005](./0005-repo-handle-shape.md) | What `Repo<D, R, M>` is, and whether it carries the request lifetime | **proposed** | **nothing** — the escape compiles and runs; waits on #39 |
 | [0006](./0006-runtime-sealed-token.md) | What `Runtime<Sealed>` is, and whether a sealed token closes the god-mode constructor | **proposed** | **nothing** — visibility alone was measured to leak |
 | [0007](./0007-field-trait-shape.md) | What `Field<D>` declares, and what forging it would buy | **proposed** | **nothing** — the seal has no trait to match |
+| [0008](./0008-guarantees-carry-scope-and-voiding-paths.md) | Every AI Context key that claims a guarantee carries its scope and the paths that void it | accepted | `spikes/doc-code-blocks/check_json.py` — plus an adversarial re-read that no checker can replace |
 
-**By status** — proposed: **0004, 0005, 0006, 0007** · accepted: 0000–0003 · superseded: none
+**By status** — proposed: **0004, 0005, 0006, 0007** · accepted: 0000–0003, 0008 · superseded: none
 
 > **Four `proposed` records, and the codebase relies on all four.** That is the
 > state [ADR-0000](./0000-record-architecture-decisions.md) calls a defect, made

@@ -179,11 +179,19 @@ The AI Context states that `reads` is metadata only for now.
 {
   "reads": {
     "fields": ["User.id", "User.name", "User.email", "User.status"],
-    "enforcement": "metadata_only"
+    "enforcement": { "level": "metadata_only", "scope": "none", "voided_by": "not_applicable" }
   },
   "mutates": {
     "fields": ["User.name", "User.email"],
-    "enforcement": "upper_bound_checked"
+    "enforcement": {
+      "level": "upper_bound_checked",
+      "scope": "handle_via_ctx",
+      "voided_by": [
+        "domain_repr", "domain_swap", "repository_impl", "service_body",
+        "middleware", "constructor_body", "malformed_set",
+        "upsert_granularity", "event_subscriber"
+      ]
+    }
   }
 }
 ```

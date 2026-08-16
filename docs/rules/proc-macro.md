@@ -351,7 +351,10 @@ quote! {
 - **The macro builds the contract JSON while expanding and embeds it as a static
   string.** Never assemble it at runtime ([`perf.md`](./perf.md), lean runtime).
 - `enforcement` and `unverified_boundaries` are embedded at the same time
-  ([`../specs/ai-context.md`](../specs/ai-context.md)).
+  ([`../specs/ai-context.md`](../specs/ai-context.md)). `enforcement` is an
+  object — `level`, `scope`, `voided_by` — and every `kind` named in a `voided_by`
+  must also be emitted in `unverified_boundaries.entries`. **Emit both from one
+  table in the macro**, never from two lists that can fall out of step.
 
 ---
 

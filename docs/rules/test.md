@@ -412,14 +412,32 @@ fn contract_json_should_include_enforcement_and_boundaries() {
 **Fields whose presence must be verified**
 ([`../specs/ai-context.md`](../specs/ai-context.md)):
 
-- `enforcement` (`upper_bound_checked` / `intent_only` / `metadata_only` / `none`)
-- `unverified_boundaries`
-- `scope_of_readonly_guarantee`
+- `enforcement` — an **object**, on every key that claims a guarantee:
+  - `level` (`upper_bound_checked` / `intent_only` / `metadata_only` / `none`)
+  - `scope` (`handle_via_ctx` / `declaration_only` / `none`)
+  - `voided_by` — `"not_applicable"`, or `kind` names that **all exist in
+    `unverified_boundaries.entries`**. Assert the join, not just the presence
+- `unverified_boundaries` — an object carrying `completeness` and `entries`
 - `condition_verified: false`
+- `model_fit`
 - `escape_hatches` — `"unknown"`, not `[]`
+- `observed.deferred` — `"unknown"`, not `[]`
 
 **Fail the test if the value `type_checked` ever appears.** The contract is an
 upper-bound check, not a bidirectional one.
+
+**Fail the test if `voided_by`, `escape_hatches` or `deferred` is `[]`.** An empty
+array reads as "nothing here", which is the one thing none of the three can claim.
+
+> There is deliberately **no `scope_of_readonly_guarantee`** to assert. It was
+> derivable from `mutates` / `creates` / `deletes` once those carried their own
+> scope, and was removed
+> ([ADR-0008](../adr/0008-guarantees-carry-scope-and-voiding-paths.md)). A test
+> still asserting it is testing a key the schema no longer has.
+
+The same rules are enforced on the **documentation's** JSON samples by
+`spikes/doc-code-blocks/check_json.py`, so a sample and a snapshot cannot drift
+apart silently.
 
 ---
 

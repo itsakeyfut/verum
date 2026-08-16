@@ -208,13 +208,17 @@ The per-method default table is **a documentation table with zero type
 checking.** Calling `ctx.cache()` without writing `effects = [+CacheWrite]` is not
 stopped by the current design.
 
-So the AI Context states `enforcement: "none"` explicitly.
+So the AI Context states `level: "none"` explicitly, and does **not** call the
+expanded list `effective` — nothing observed it, and `effective` means "the fully
+expanded declaration" everywhere else in the output
+([`ai-context.md`](./ai-context.md) §2).
 
 ```json
 "effects": {
   "declared_delta": ["+CacheWrite"],
-  "effective": ["DatabaseRead", "DatabaseMutation", "CacheRead", "CacheWrite", "Logging", "Metrics", "Tracing"],
-  "enforcement": "none"
+  "assumed_from_method": ["DatabaseRead", "DatabaseMutation", "CacheRead", "CacheWrite", "Logging", "Metrics", "Tracing"],
+  "derived_from": "method_default_table",
+  "enforcement": { "level": "none", "scope": "none", "voided_by": "not_applicable" }
 }
 ```
 
@@ -283,10 +287,17 @@ If auth middleware updates last_login_at:
   request scope : User.last_login_at is updated (false)
 ```
 
-Stated in the AI Context as
-`scope_of_readonly_guarantee: "handler_only"`. It is promoted to `"request"` once
-middleware contracts are introduced. See
+Stated in the AI Context per key rather than once globally: `mutates`, `creates`
+and `deletes` each carry `enforcement.scope: "handle_via_ctx"` and list
+`middleware` under `voided_by`. When middleware contracts arrive, `middleware`
+leaves `voided_by` and the scope widens. See
 [`unverified-boundaries.md`](./unverified-boundaries.md).
+
+> **There is no `scope_of_readonly_guarantee` key.** It said what those three keys
+> now say, and it overstated in exactly the way this section warns against — a GET
+> still causes Logging, Metrics, Tracing, CacheRead and CacheWrite, so the
+> guarantee was never "read-only" but "no state mutation".
+> [ADR-0008](../adr/0008-guarantees-carry-scope-and-voiding-paths.md).
 
 ---
 
