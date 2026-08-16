@@ -109,8 +109,18 @@ enumerates every effect that handler causes.**
 
 ### The part that remains convention (an important limit)
 
-Rule 2's consequence — "grep enumerates every effect" — **depends on free
-associated functions being pure.**
+Rule 2's consequence — "grep enumerates every effect" — **depends on more than
+it says, and T-M1-07 (#37) measured how much.** Six constructs defeat it, in two
+groups:
+
+| The scan cannot leave the item | The scan matches by spelling |
+|---|---|
+| a free associated function taking `&ctx` (below) | the handler's parameter named anything but `ctx` — **this one silently voids every key at once** |
+| a helper in a sibling `impl` block | `let repo = ctx.users(); repo.set_name(..)` |
+| **an effect produced by a `macro_rules!` expansion** — unreachable even with cross-item analysis, since the macro may come from another crate | `Repo::set_name(&ctx.users(), ..)` (UFCS) |
+
+The right-hand column is closable — the left-hand column's third row is not.
+Reproduction: `spikes/contract-from-tokens/`. The original limit, still true:
 
 ```rust,compile_fail
 ctx.audit_logs().create(AuditLog::user_updated(&user))?;
@@ -218,7 +228,7 @@ ctx.audit_logs().create(...)?;                   // this can still fail
 // ✅ fires after the commit
 ctx.users().set_email(&mut user, req.email)?;
 ctx.audit_logs().create(...)?;
-ctx.after_commit(|ctx| async move {
+ctx.after_commit(async |ctx| {
     ctx.email().send_verification(&user).await
 }).await?;
 ```
@@ -263,7 +273,7 @@ impl Handler for UpdateUser {
         async move {
             let mut user = ctx.users().find(req.id).await?;
 
-            ctx.users().set_name(&mut user, req.name)?;
+            ctx.users().set_name(&mut user, req.name.clone())?;
 
             ctx.when::<EmailChanged, _>(&mut user, &req, async |ctx, user, req| {
                 ctx.users().set_email(user, req.email.clone())?;
@@ -274,7 +284,7 @@ impl Handler for UpdateUser {
             ctx.audit_logs().create(AuditLog::user_updated(&user))?;
             ctx.events().emit(UserUpdated::from(&user))?;
 
-            ctx.after_commit(|ctx| async move {
+            ctx.after_commit(async |ctx| {
                 ctx.email().send_verification(&user).await
             }).await?;
 
@@ -283,6 +293,20 @@ impl Handler for UpdateUser {
     }
 }
 ```
+
+> **Two lines here were corrected in T-M1-07 (#37), by compiling the example.**
+>
+> * `req.name` → `req.name.clone()`. Without it `req` is partially moved two
+>   lines before `&req` reaches `when`: **`E0382`**, reproduced in 14 lines. The
+>   example already clones `req.email` inside the closure.
+> * `|ctx| async move { .. }` → `async |ctx| { .. }` in `after_commit`. Under the
+>   `AsyncFnOnce` bound, the first form is **`E0282`** and the second compiles.
+>   (Not "the only bound that permits the borrow" — a named lifetime tied to the
+>   receiver, and a HRTB over a boxed future, both accept the original form. Which
+>   bound `after_commit` should actually carry is #39 / #40's.)
+>   This is RK-005, which the spec had applied to `when` and not here.
+>
+> Reproduction: `spikes/contract-from-tokens/`.
 
 ### Why this implementation is self-evident
 

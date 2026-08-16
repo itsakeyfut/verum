@@ -1,0 +1,35 @@
+# T-M1-07 / #37 — can token-scanning `handle` recover the Contract?
+#
+# An INDEPENDENT workspace, so that a probe designed to fail (R1) never reaches
+# `cargo check --workspace`.
+#
+# TWO CRATES, AND THE SPLIT IS THE POINT
+#   `mac` is the attribute macro; `app` is the worked example from
+#   `docs/specs/handler-rules.md` §The complete implementation example, written
+#   token-for-token. A proc macro can only be exercised from a *separate* crate,
+#   so the split is forced rather than stylistic.
+#
+# `crates/verum-macros` is deliberately untouched: #34 (derive vs attribute for
+# the Domain macro) is undecided and would change the macro's form. This measures
+# the mechanism without pre-empting that.
+#
+# Dependency versions match the root workspace so the measurement transfers.
+[workspace]
+resolver = "3"
+members = ["mac", "app"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+# Per package, not `#![deny(..)]` in lib.rs: the latter does not reach a
+# package's integration-test crates (`docs/rules/test.md` §9-4, measured in #13).
+[workspace.lints.rust]
+unexpected_cfgs = "deny"
+
+[workspace.dependencies]
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+syn = { version = "3.0.3", features = ["full", "extra-traits", "visit"] }
+mac = { path = "mac" }

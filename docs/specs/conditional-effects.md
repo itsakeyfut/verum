@@ -104,7 +104,7 @@ catch-all impl always collides
 ### The consequence in an implementation
 
 ```rust,ignore   // fragment, not a complete item
-ctx.users().set_name(&mut user, req.name)?;      // ✅ declared at the top level
+ctx.users().set_name(&mut user, req.name.clone())?;      // ✅ declared at the top level
 ```
 
 ```rust,compile_fail

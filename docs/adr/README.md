@@ -26,10 +26,11 @@ Format: [MADR 4.0](https://adr.github.io/madr/). Copy
 | [0006](./0006-runtime-sealed-token.md) | What `Runtime<Sealed>` is, and whether a sealed token closes the god-mode constructor | **proposed** | `spikes/ctx-lifetime-rpitit` A0 — visibility blocks *construction* only; a public erased-handler entry point still supplies a live `Ctx` |
 | [0007](./0007-field-trait-shape.md) | What `Field<D>` declares, and what forging it would buy | **proposed** | **nothing** — the seal has no trait to match |
 | [0008](./0008-guarantees-carry-scope-and-voiding-paths.md) | Every AI Context key that claims a guarantee carries its scope and the paths that void it | accepted | `spikes/doc-code-blocks/check_json.py` — plus an adversarial re-read that no checker can replace |
+| [0009](./0009-observed-is-not-a-lower-bound.md) | `observed` is not a lower bound, and Q-A is reopened on the measurement | proposed | `spikes/contract-from-tokens/` — probes **V1** and **V2**, which a sound or complete scanner would turn red |
 
-**By status** — proposed: **0004, 0005, 0006, 0007** · accepted: 0000–0003, 0008 · superseded: none
+**By status** — proposed: **0004, 0005, 0006, 0007, 0009** · accepted: 0000–0003, 0008 · superseded: none
 
-> **Four `proposed` records, and the codebase relies on all four.** That is the
+> **Five `proposed` records, and the codebase relies on all five.** That is the
 > state [ADR-0000](./0000-record-architecture-decisions.md) calls a defect, made
 > visible rather than fixed. Each names the issue that settles it: #39 (with #40),
 > path 9, path 14. **0004 is measured but not settled** — #15 showed the mechanism

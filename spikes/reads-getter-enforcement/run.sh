@@ -68,7 +68,9 @@ if [[ "$RUSTC_V" != rustc\ ${TOOLCHAIN}\ * ]]; then
     exit 1
 fi
 # §9-12 again: assert the dependency edge rather than printing a literal.
-if ! "${CARGO[@]}" metadata --format-version 1 --no-deps >/dev/null 2>&1; then
+# NOT `--no-deps`: that skips dependency resolution, so an unresolvable tree
+# returns 0 and this cannot fire for the reason it names (measured in #37).
+if ! "${CARGO[@]}" metadata --format-version 1 >/dev/null 2>&1; then
     echo "FATAL: the dependency tree cannot be resolved. The first probe's" >&2
     echo "       failure would otherwise be reported as a spike result." >&2
     exit 1

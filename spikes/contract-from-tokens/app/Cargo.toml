@@ -1,0 +1,19 @@
+[package]
+name = "app"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mac.workspace = true
+
+# R1 is the one probe that must NOT compile: `#[observe]` on a struct.
+[features]
+# Declared and never enabled — V2 needs a cfg that is real but off.
+never-enabled = []
+r1-observe-on-a-struct = []
+r2-helper-in-the-observed-block = []

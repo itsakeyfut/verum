@@ -420,12 +420,42 @@ Capabilities are never materialised as values; they are **expressed through
 A proc macro sees only the tokens of a single item, not the bodies of what it
 calls.
 
-But by [`handler-rules.md`](./handler-rules.md) Rule 2, **effects are
-syntactically confined inside a single item, `handle`.** An attribute macro on the
-impl block can see all of `handle`'s body tokens.
+An attribute macro on the impl block **can** see all of `handle`'s body tokens —
+compile-verified in T-M1-07 (#37), which recovered three of the five distinct
+contract keys from `handler-rules.md`'s worked example (five of seven counting
+`when`-scoped instances separately), **including the conditional split**: an
+effect inside `ctx.when::<C>` comes back tagged with `C`, never at top level,
+and a nested `when` carries both conditions.
 
-That fact is what makes the "generate the contract from the implementation"
-approach feasible. See [`effect-inference.md`](./effect-inference.md).
+> **What does not hold is the second half of the claim, and the scan is not
+> monotone.** An earlier version of this section said effects are "syntactically
+> confined inside a single item, `handle`", and that *that* is what makes
+> generation feasible. Confinement is a **convention**, and the measured
+> failures fall into two groups with different fixes:
+>
+> | The scan cannot leave its item | The scan matches by spelling |
+> |---|---|
+> | a free associated function taking `&ctx` | **the handler parameter named anything but `ctx`** — voids every key at once, and nothing warns |
+> | a helper in a **sibling** `impl` block | `let repo = ctx.users(); repo.set_name(..)` |
+> | **an effect from a `macro_rules!` expansion** — unreachable even with cross-item analysis, since the macro may come from another crate | `Repo::set_name(&ctx.users(), ..)` (UFCS) |
+>
+> The right-hand column is closable — in the scanner, or at layer 1 for the
+> parameter name. The left column's third row is not. `E0407` does forbid a
+> helper *beside* `handle` in the trait impl, but a nested `fn` inside `handle`
+> and a trait default method are both visible, so placement is the variable, not
+> the language.
+>
+> **And it reports effects that never run.** A proc macro executes before
+> cfg-stripping, so a `#[cfg]`-gated statement naming a nonexistent type appears
+> in the output. So the generated set is neither a subset nor a superset of what
+> the program does. A missing effect reads as over-declaration; a phantom one
+> reads as **under-declaration**, whose repair is to widen the contract — the
+> bias `evaluation.md`'s Q-C measured. The type system refuses narrowing only for
+> keys at `upper_bound_checked`; **`reads` is `metadata_only` and has no such
+> backstop.**
+
+Measurement and reproduction: `spikes/contract-from-tokens/`. Decision:
+[`effect-inference.md`](./effect-inference.md).
 
 Conversely, a macro seeing a single item is also what allows spans inside the
 attribute to be preserved ([`diagnostics.md`](./diagnostics.md)).

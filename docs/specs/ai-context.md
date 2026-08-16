@@ -162,7 +162,7 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
         "permanent": false },
       { "kind": "uncapped_read", "detail": "a Domain's Debug and free functions read fields outside the endpoint's reads; no getter shape reaches them, and a Projection narrows only its own Debug (path 23)",
         "permanent": false },
-      { "kind": "service_body", "detail": "the observed_effects scan covers only the inside of handle; effects in a service body do not appear in the lower bound (path 22)",
+      { "kind": "service_body", "detail": "the observed_effects scan is neither complete nor sound: it cannot leave its own item, it matches receivers by spelling, and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
         "permanent": false },
       { "kind": "domain_repr", "detail": "a domain's Repr is reachable from anywhere in the same crate (path 21)",
         "location": "src/domain/user.rs", "permanent": false },
@@ -276,8 +276,8 @@ happens**" is a separate field, **generated** by scanning `handle`'s tokens.
 | Key | Meaning |
 |---|---|
 | `fields` | The effects the scan **found written** inside `handle`. **Generated, never hand-written** |
-| `scope` | How far the scan reached. `"handle_only"` in the First PoC. **Without it, an AI misreads the lower bound as covering every path** |
-| `deferred` | Items escaped via `@service`. A service body is not scanned, so anything appearing here also raises a `service_body` entry in `unverified_boundaries` |
+| `scope` | How far the scan reached. `"handle_only"` in the First PoC — ⚠️ **the value overstates itself**: T-M1-07 measured that the scan does not cover all of `handle`. It was added so an AI would not misread the lower bound as covering every path, and it now produces a smaller version of that same misreading. Replacement tracked on path 22 |
+| `deferred` | Items escaped via `@service`. A service body is not scanned, so anything appearing here also raises a `service_body` entry in `unverified_boundaries`. **That `kind` now under-describes its own boundary** — T-M1-07 showed most of the misses are inside `handle`, not in a service. Renaming it is tracked on path 22 |
 
 **`observed.fields` is syntactic presence, not execution.** The scan reads
 tokens: a `set_email` written inside a `when` block, behind an `if`, or on a path
@@ -301,9 +301,21 @@ deferred", which is precisely the claim nobody can make.
 > lower bound in the first place. **`observed` is otherwise unchanged here**, so
 > that this file does not prejudge either.
 
-**How to read it**: if `enforcement: upper_bound_checked` and
-`observed.fields == effective` and `deferred` is empty, then within that `scope`
-**the set is exact.** If any one of the three is missing, it is not.
+**How to read it** — ⚠️ **corrected by T-M1-07 (#37); the earlier rule was
+false.** It said: if `enforcement: upper_bound_checked` and
+`observed.fields == effective` and `deferred` is empty, then **within that
+`scope` the set is exact**. It is not. The scan misses effects that are inside
+`scope: "handle_only"` — a receiver bound to a local, a renamed `ctx` parameter,
+a UFCS call — and it reports effects from code that is never compiled. So:
+
+* `observed.fields == effective` means the two agree, **not** that either is
+  complete.
+* **`observed` is not a lower bound.** It is syntactic presence within one item,
+  matched by spelling.
+* The only exactness claim that survives is the upper bound, from
+  `enforcement`, with the `scope` and `voided_by` that key carries.
+
+Path 22 records the six measured constructs.
 
 `declared \ observed ≠ ∅` — over-declaration — is failed by CI, so **an
 over-declaration does not normally survive into this output.** If one has, look at
