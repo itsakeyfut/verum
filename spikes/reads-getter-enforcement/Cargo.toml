@@ -1,0 +1,38 @@
+# T-M1-03 / #15 — can capability-checked getters enforce `reads` without `Projection`?
+#
+# An INDEPENDENT workspace, so that its deliberately-broken probes — a dozen
+# `#[cfg]`-gated items that must NOT compile — never reach
+# `cargo check --workspace`.
+#
+# TWO CRATES, AND THAT IS THE MEASUREMENT
+#   `fw` is the framework (`Repo`, `ReadSet`); `app` is the downstream crate
+#   that owns the `Domain`. The first version of this spike put both in one
+#   crate, and that made an inherent `impl Repo<Domain, R, M>` compile — which
+#   it cannot in the real layering (E0116, RK-004). Probe E1 pins that.
+#
+# It path-depends on `crates/verum` because requirement 4 asks for the error
+# text an undeclared read produces, and `verum::Has` carries
+# `#[diagnostic::on_unimplemented]` and `#[diagnostic::do_not_recommend]`. A
+# hand-rolled stand-in has neither, so its text would be a different
+# specification from the one M4 inherits. `spikes/doc-code-blocks/stub` does the
+# same; this is not the only spike that does.
+[workspace]
+resolver = "3"
+members = ["fw", "app"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+# Per package, not `#![deny(...)]` in lib.rs: the latter does not reach a
+# package's integration-test crates (`docs/rules/test.md` §9-4, measured in #13).
+# Note this guards the SOURCE-side spelling only. A misspelled name in
+# `--features` on the command line is cargo's own error, and run.sh's needles are
+# error codes precisely so that error cannot be mistaken for a probe result.
+[workspace.lints.rust]
+unexpected_cfgs = "deny"
+
+[workspace.dependencies]
+verum = { path = "../../crates/verum" }
+fw = { path = "fw" }
