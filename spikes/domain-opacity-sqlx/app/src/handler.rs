@@ -160,3 +160,176 @@ pub struct ReprOnlyUser {
 #[cfg(feature = "p17-derive-repr-only")]
 const _: fn(crate::handler::ReprOnlyUserRepr) -> crate::handler::ReprOnlyUserWrapper =
     crate::handler::ReprOnlyUserWrapper;
+
+// ---------------------------------------------------------------------------
+// #33 — the candidate gates, and the mechanism that survives them.
+//
+// There is deliberately no probe here for "a generated repository is present and
+// the handler still forges". **P2 above already is that probe**: `app/src/repo.rs`
+// exists and is the repository, and P2 forges anyway. Generating the repository
+// changes who *should* call `from_repr`; it does not change who *can*.
+// ---------------------------------------------------------------------------
+
+/// P22 — the token gate, called without a token.
+///
+/// Must not compile. But note *how* it fails: `E0061`, "this function takes 2
+/// arguments but 1 was supplied". That is an arity error. It carries no wording
+/// Verum wrote and says nothing about contracts, which is the first half of why
+/// #33's requirement 2 (`E0277`) is not reachable by this route.
+#[cfg(feature = "p22-token-missing")]
+pub fn forge_without_token() -> crate::domain::User {
+    crate::domain::User::from_repr_tokened(crate::domain::UserRepr {
+        id: 1,
+        name: "attacker".to_owned(),
+        email: "attacker@example.com".to_owned(),
+    })
+}
+
+/// P23 — the second half: the token is **stealable**.
+///
+/// `fw::run_repository` mints a token and hands it to a `TokenRepository`. The
+/// user writes their own impl, receives the token, and forges with it. This must
+/// compile, and it is why no value-passing gate can work: the token has to reach
+/// user code through a trait the user can implement, because that is the same
+/// trait `#[derive(Domain)]` implements.
+#[cfg(feature = "p23-token-stolen")]
+pub struct ThiefRepo;
+
+#[cfg(feature = "p23-token-stolen")]
+impl fw::TokenRepository for ThiefRepo {
+    type Domain = crate::domain::User;
+    fn load(&self, t: fw::RepoToken) -> Self::Domain {
+        crate::domain::User::from_repr_tokened(
+            crate::domain::UserRepr {
+                id: 1,
+                name: "attacker".to_owned(),
+                email: "attacker@example.com".to_owned(),
+            },
+            t,
+        )
+    }
+}
+
+#[cfg(feature = "p23-token-stolen")]
+pub fn forge_with_stolen_token() -> crate::domain::User {
+    fw::run_repository(&ThiefRepo)
+}
+
+/// P24 — the bound gate, forged from the application crate.
+///
+/// `from_repr_proved<P: fw::RepositoryProof>` looks like it closes the hole and
+/// would reject with `E0277` carrying Verum's `on_unimplemented` wording. It does
+/// not, because nothing stops the handler supplying its own proof: implementing a
+/// **foreign trait for a local type** is what the orphan rules exist to permit.
+/// This must compile.
+#[cfg(feature = "p24-proof-forged")]
+pub struct MyProof;
+
+#[cfg(feature = "p24-proof-forged")]
+impl fw::RepositoryProof for MyProof {}
+
+#[cfg(feature = "p24-proof-forged")]
+pub fn forge_with_own_proof() -> crate::domain::User {
+    crate::domain::User::from_repr_proved(
+        crate::domain::UserRepr {
+            id: 1,
+            name: "attacker".to_owned(),
+            email: "attacker@example.com".to_owned(),
+        },
+        MyProof,
+    )
+}
+
+/// P26 — **the mechanism.** The same forgery against a constructor that carries
+/// no visibility modifier, from a module that is not the domain's own.
+///
+/// Must not compile. `AccountRepr` is `pub(crate)` precisely so that this probe
+/// fails on the *constructor* and not on the type name — otherwise it would be
+/// measuring `E0603` and proving nothing about `from_repr`.
+#[cfg(feature = "p26-confined-handler")]
+pub fn forge_confined() -> crate::confined::Account {
+    crate::confined::Account::from_repr(crate::confined::AccountRepr {
+        id: 1,
+        name: "attacker".to_owned(),
+        email: "attacker@example.com".to_owned(),
+    })
+}
+
+/// P30 — constraint 2. With the `Repr` module-private, the handler cannot even
+/// name it, so `Debug` / `Clone` on it cannot leak (contrast P20).
+#[cfg(feature = "p30-secret-repr-hidden")]
+pub fn leak_secret_repr() -> Option<crate::confined::SecretRepr> {
+    // Naming the type is already enough to fail. Kept to exactly that: an earlier
+    // version also called a `From` that does not exist, which added an `E0308` and
+    // would have let the probe pass on an error unrelated to visibility.
+    None
+}
+
+// P31 / P34 / P35 live in `nested.rs` itself, not here. The point of P31 is a
+// helper written *beside the user's own domain declaration* — under the nested
+// mechanism that is `nested.rs`, outside the generated module. Probing from
+// `handler.rs` would fail on the private module name (`E0603`) and measure
+// nothing about the constructor.
+
+/// P33 — the crate-root hole in the FLAT mechanism. Must compile; that is the point.
+#[cfg(feature = "p33-root-flat")]
+pub fn forge_root_flat() -> crate::RootUser {
+    crate::RootUser::from_repr(crate::RootUserRepr {
+        email: "attacker@example.com".to_owned(),
+    })
+}
+
+/// P32 — the same layout under the nested mechanism. Must be rejected.
+#[cfg(feature = "p32-root-nested")]
+pub fn forge_root_nested() -> crate::RootNested {
+    crate::RootNested::from_repr(crate::__verum_rootuser::RootNestedRepr {
+        email: "attacker@example.com".to_owned(),
+    })
+}
+
+/// P36 — the framework-trait form defeats the confinement entirely.
+///
+/// Trait-method visibility is the **trait's**, not the impl module's. So the
+/// moment the conversion moves onto `fw::DomainRepr` — which this spike's own P9
+/// and P14 already do, and which a generic runtime would need — every wall above
+/// evaporates. This must compile, and it is why ADR-0010 has to state that the
+/// conversion may not sit on a public trait.
+#[cfg(feature = "p36-trait-defeats")]
+pub fn forge_via_public_trait() -> crate::confined::TraitAccount {
+    use fw::DomainRepr;
+    crate::confined::TraitAccount::from_repr(crate::confined::trait_repr::TraitAccountRepr {
+        email: "attacker@example.com".to_owned(),
+    })
+}
+
+/// P37 — the bound gate DOES render Verum-authored wording.
+///
+/// Round 1 asserted `E0277` with `on_unimplemented` was "unreachable". Review
+/// refuted that by compiling it. It is reachable and it renders; what it cannot
+/// do is *close* the hole (P24 / P25 supply the two-line bypass). Measuring the
+/// wording keeps the ADR's Option C honest — it is rejected for being
+/// unenforceable, not for being unavailable.
+#[cfg(feature = "p37-proof-wording")]
+pub fn forge_without_proof() -> crate::domain::User {
+    struct NoProof;
+    crate::domain::User::from_repr_proved(
+        crate::domain::UserRepr {
+            id: 1,
+            name: "attacker".to_owned(),
+            email: "attacker@example.com".to_owned(),
+        },
+        NoProof,
+    )
+}
+
+// --- vacuity pins (rule 13). Review gutted each of these bodies to
+// `unimplemented!()` and the probes stayed green. The artifact each probe claims
+// to establish is a *signature*, so pin the signature at the call site.
+#[cfg(feature = "p2-from-repr")]
+const _: fn(UserRepr) -> User = User::from_repr;
+#[cfg(feature = "p23-token-stolen")]
+const _: fn(&ThiefRepo, fw::RepoToken) -> crate::domain::User =
+    <ThiefRepo as fw::TokenRepository>::load;
+#[cfg(feature = "p24-proof-forged")]
+const _: fn(crate::domain::UserRepr, MyProof) -> crate::domain::User =
+    crate::domain::User::from_repr_proved;

@@ -191,12 +191,72 @@ probe P17 pass 'Finished' check -p app --features p17-derive-repr-only
 probe P19 pass 'Finished' check -p app --features p19-flat-cached-repr
 echo
 
+echo "=== #33 — can path 21 be closed? ==="
+echo "  Four gates. The premise-falsifier is P2 above: app/src/repo.rs IS the"
+echo "  repository, and P2 forges anyway — so generating it is not sufficient."
+# The token gate. E0061 is an *arity* error: it rejects, but carries no wording
+# Verum wrote, which is half of why requirement 2 (E0277) is unreachable.
+probe P22 fail 'E0061' check -p app --features p22-token-missing
+# The other half: the token reaches user code through a trait the user can
+# implement — necessarily, since that is the trait the derive implements too.
+probe P23 pass 'Finished' check -p app --features p23-token-stolen
+# The bound gate, which is the only shape whose rejection could be E0277. It is
+# not sealed, and cannot be: `impl fw::RepositoryProof for MyProof {}` is a
+# foreign trait on a local type.
+probe P24 pass 'Finished' check -p app --features p24-proof-forged
+# ...and that impl is writable from any crate at all, not just the app's.
+probe P25 pass 'Finished' check -p separate-repo --features p25-proof-forged-foreign
+echo
+echo "  ...and the one that survives: no modifier on from_repr, repository emitted"
+echo "  into the domain's own module."
+# THE MECHANISM. AccountRepr is pub(crate) so this fails on the *constructor*
+# rather than on the type name — otherwise it would measure E0603 and prove
+# nothing about from_repr.
+probe P26 fail 'E0624' check -p app --features p26-confined-handler
+# From a foreign crate. Both codes fire; E0603 is the one that arrives first, and
+# it is the Repr's visibility rather than the confinement doing that work (same
+# wall as P5). Stated so the mechanism is not credited with more than it does.
+probe P27 fail 'E0624' check -p separate-repo --features p27-confined-foreign
+# THE RESIDUE. A helper beside the user's own `struct Account` is inside the
+# confinement and still forges. Without this row the table reads "closed".
+probe P29 pass 'Finished' check -p app --features p29-same-module-forge
+# Constraint 2: a module-private Repr takes ledger paths 3 and 4 with it — the
+# name is unreachable, so there is no Debug to call. Contrast P20.
+probe P30 fail 'E0603' check -p app --features p30-secret-repr-hidden
+echo
+
+echo "=== #33 round 2 — option D is dominated ==="
+echo "  Review found two holes in the flat form and a mechanism without them."
+# THE DECIDING PAIR. P29 (above) forges; P31 is the same shape under a derive-owned
+# nested module and must be rejected. If P31 is red the residue is not unavoidable.
+probe P31 fail 'E0624' check -p app --features p31-nested-user-helper
+# The precondition nobody stated: at the crate root, "no modifier" IS pub(crate).
+probe P33 pass 'Finished' check -p app --features p33-root-flat
+# ...and the nested form does not care where the user put the domain.
+probe P32 fail 'E0624' check -p app --features p32-root-nested
+# The read half. Ledger path 21 names `as_repr()` too, and round 1 measured only
+# the constructor while the specs claimed both.
+probe P34 fail 'E0624' check -p app --features p34-nested-as-repr
+# Constraint 2, measured with an actual Debug call. Round 1's P30 only NAMED the
+# Repr and was insensitive to the derives it was cited as neutralising.
+probe P35 fail 'E0624' check -p app --features p35-nested-repr-debug
+# The constraint the decision depends on: trait-method visibility is the TRAIT's.
+probe P36 pass 'Finished' check -p app --features p36-trait-defeats
+# And the retraction: E0277 with Verum's wording is reachable after all. It is
+# rejected for being unenforceable (P24/P25), not for being unavailable.
+probe P37 fail 'cannot authorise constructing a Domain value' check -p app --features p37-proof-wording
+echo
+
 echo "=== does it actually work, not just type-check? ==="
 # The count, not just `ok`: `cargo test -p app` runs three targets and two of them
 # always report `test result: ok. 0 passed`, so the bare string matches even with
 # roundtrip.rs deleted (measured). This is the only probe that answers "does it
 # run", so it is the last one that should be able to pass vacuously.
 probe P8 pass 'test result: ok. 2 passed' test -p app --features p2-from-repr --test roundtrip
+# P28 — #33's `pass` case. A table of rejections proves nothing about the design
+# still being usable, so the confined constructor is exercised against a real row
+# through the repository the derive emits beside it.
+probe P28 pass 'VERUM_P28_LOADED=alice@example.com' test -p app --test confined -- --nocapture
 echo
 
 printf 'result: %d as specified, %d unexpected\n' "$pass" "$fail"

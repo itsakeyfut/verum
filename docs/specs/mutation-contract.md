@@ -95,8 +95,9 @@ What the derive generates:
 2. Capability-checked getters        → read-contract.md. #15 measured that they DO enforce, in an
                                         extension trait, on two undesigned preconditions — the level
                                         stays metadata_only (ADR-0004, still `proposed`)
-3. A pub(crate) Repr                 → the internal representation (⚠️ it does not end up
-                                        "for the repository implementation only" — path 21)
+3. A module-private Repr             → the internal representation, inside the
+                                        derive-owned module (#33 / ADR-0010; a
+                                        `pub(crate)` Repr is path 21)
 4. A Debug emitting declared fields only     → prevents secrets leaking into logs. "Declared" here
                                                means the DOMAIN's fields, which is all of them; only
                                                a Projection narrows to the ENDPOINT's reads (#15, P4)
@@ -136,10 +137,11 @@ error: Domain fields must be private
 "Adding `pub` by accident" is one of the guarantee-breaking routes that **a macro
 can reject**, so it is rejected at the macro stage.
 
-> **It is not the only route** (measured in T-M1-01 / #13). The `Repr` the same
-> macro generates opens a bypass alongside it (ledger path 21), and deriving
-> `Debug` or `Clone` on `Repr` brings paths 3 and 4 back. This check is necessary
-> but not sufficient.
+> **It is not the only route** (measured in T-M1-01 / #13). A `pub(crate)` `Repr`
+> opens a bypass alongside it (ledger path 21), and deriving `Debug` or `Clone` on
+> it brings paths 3 and 4 back. Both close when the `Repr` and the conversion move
+> into a derive-owned private module (#33 / ADR-0010, P31/P35). This check is
+> necessary but not sufficient.
 
 ### Interoperating with a repository implementation
 
@@ -161,8 +163,10 @@ pub(crate) struct UserRepr {
 pub struct User(UserRepr);
 
 impl User {
-    pub(crate) fn from_repr(r: UserRepr) -> Self { ... }
-    pub(crate) fn as_repr(&self) -> &UserRepr { ... }
+    // No visibility modifier, inside the derive-owned module (#33 / ADR-0010).
+    // `pub(crate)` here means "every handler in the application" — path 21.
+    fn from_repr(r: UserRepr) -> Self { ... }
+    fn as_repr(&self) -> &UserRepr { ... }
 }
 ```
 
@@ -176,8 +180,9 @@ impl User {
 > arbitrary values. Putting the repository in a separate crate has the opposite
 > problem: `Repr` is invisible (`E0603`) and the design does not function at all.
 >
-> In other words **making the fields private does work**, but `Repr` has opened a
-> bypass alongside it. Ledger **path 21**.
+> In other words **making the fields private does work**, but a `pub(crate)` `Repr`
+> opens a bypass alongside it — ledger **path 21**, closed conditionally by
+> #33 / ADR-0010 (the `Repr` and the conversion move into a derive-owned module).
 >
 > **But the guarantee from privacy is "from outside the defining module", not a
 > type boundary** (measured). From the defining module and its children,
@@ -196,7 +201,7 @@ impl User {
 > emit (`E0428`). Several shapes **do satisfy the `as_repr(&self) -> &Repr`
 > signature itself** through a derive (measured), so it is not the case that the
 > signature and a derive are incompatible. Which macro shape to use is
-> **undecided** (#18).
+> **undecided** (#34 — this said #18, which closed without deciding it).
 >
 > The full verdict and the 21-probe table are in
 > [`persistence.md`](./persistence.md) §Verdict and
@@ -364,7 +369,8 @@ That it is not type-enforced is not hidden.
 > generates one per field — and what fails is its where clause, E0277 rather than
 > E0599 (§MustNotMutate needs no declaration above). Writing "uncallable"
 > contradicted this file two sections earlier, and under ledger path 21 a handler
-> can build a `User` with any `password_hash` without calling a setter at all.
+> could build a `User` with any `password_hash` without calling a setter at all —
+> `E0624` since #33 / ADR-0010, while the conversion stays an inherent method.
 
 ---
 

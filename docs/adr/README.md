@@ -27,8 +27,9 @@ Format: [MADR 4.0](https://adr.github.io/madr/). Copy
 | [0007](./0007-field-trait-shape.md) | What `Field<D>` declares, and what forging it would buy | **proposed** | **nothing** — the seal has no trait to match |
 | [0008](./0008-guarantees-carry-scope-and-voiding-paths.md) | Every AI Context key that claims a guarantee carries its scope and the paths that void it | accepted | `spikes/doc-code-blocks/check_json.py` — plus an adversarial re-read that no checker can replace |
 | [0009](./0009-observed-is-not-a-lower-bound.md) | `observed` is not a lower bound, and Q-A is reopened on the measurement | proposed | `spikes/contract-from-tokens/` — probes **V1** and **V2**, which a sound or complete scanner would turn red |
+| [0010](./0010-domain-constructor-confined-by-module-privacy.md) | The Domain constructor is confined to a derive-owned module, not to the user's | accepted | `spikes/domain-opacity-sqlx/run.sh` — **P31** (`E0624`), **P32** (crate root), **P34** (`as_repr`), **P35** (the `Repr`); P31 mutation-verified. **P33 / P36 are the counter-evidence rows and must pass** |
 
-**By status** — proposed: **0004, 0005, 0006, 0007, 0009** · accepted: 0000–0003, 0008 · superseded: none
+**By status** — proposed: **0004, 0005, 0006, 0007, 0009** · accepted: 0000–0003, 0008, 0010 · superseded: none
 
 > **Five `proposed` records, and the codebase relies on all five.** That is the
 > state [ADR-0000](./0000-record-architecture-decisions.md) calls a defect, made

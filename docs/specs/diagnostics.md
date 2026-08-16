@@ -299,9 +299,10 @@ attribute.
 
 ### Rustc-native diagnostics Verum cannot reword
 
-Three so far. Each was parked in its own domain spec; they belong in one list,
-because the shared property is what matters — **`on_unimplemented` never runs**,
-so no wording Verum writes reaches the user.
+Each was parked in its own domain spec; they belong in one list, because the
+shared property is what matters — **`on_unimplemented` never runs**, so no wording
+Verum writes reaches the user. (This opened "Three so far" while the table held
+five; the count is dropped rather than maintained.)
 
 | Error | Where it fires | Recorded in |
 |---|---|---|
@@ -310,6 +311,7 @@ so no wording Verum writes reaches the user.
 | `implementation of AsyncFnOnce is not general enough` | a higher-ranked `Ctx` in an `Fn`-trait position (T-M1-02 / #14) | [`conditional-effects.md`](./conditional-effects.md) |
 | `E0282` — type annotations needed | `\|ctx\| async move { .. }` where the returned future borrows the argument; `async \|ctx\| { .. }` compiles (T-M1-07 / #37) | [`handler-rules.md`](./handler-rules.md) Rule 4 |
 | `E0407` — method is not a member of trait | a helper placed beside `handle` in the observed `impl` block (T-M1-07 / #37) | [`unverified-boundaries.md`](./unverified-boundaries.md) path 22 |
+| `E0624` / `E0603` — associated function / struct is private | building a domain from its `Repr` outside the derive-owned module (#33 / [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | [`persistence.md`](./persistence.md), [`unverified-boundaries.md`](./unverified-boundaries.md) path 21 |
 
 **Two of these have no trait-bound alternative.** The pattern above — "name the
 bound that *would* let Verum own the wording" — does not apply to `E0407`: "put
@@ -317,10 +319,35 @@ the helper somewhere else" is not expressible as a bound. Worse, the move
 `E0407` correctly recommends is the one that makes the effect invisible to the
 scan, and no wording Verum controls can say so.
 
+**`E0624` is a third category, and the sharpest one: the trait-bound alternative
+exists, produces good wording, and does not hold.** #33 compiled it — a bound on
+the constructor yields `E0277` carrying Verum's `message` and `note` verbatim
+(probe P37). It is still rejected, because the guarding trait is implementable by
+the user from any crate (P24 / P25), so the wording is *reachable and worthless*.
+Naming the bound is therefore **not** always the escape this section's pattern
+suggests; check that the bound can actually be closed before proposing it.
+
+**Two further properties of `E0624` are worse than the rows above, and are open
+risks rather than recorded costs:**
+
+1. `rustc --explain E0624` names both bypasses by number — *"1. Only use the item
+   in the scope it has been defined"* and *"2. Make the item public"*. The first is
+   the residue ADR-0010's option D left open; under the chosen option the module is
+   derive-owned, so it is unavailable to the user, but the text still points that way.
+2. The error emits **no pointer to the generated repository**, and its only
+   navigational span is into the generated module. So the checked alternative
+   ARK-002 requires exists but is **not discoverable from the failure**.
+
+This is also the one row that violates the "both directions" rule below. It is
+recorded as a knowing exception, not an oversight: there is no attribute that
+attaches to a path-resolution diagnostic.
+
 The third is the worst of them: it names no type the user wrote, and #14
 promoted it to a first-class footgun. `persistence.md` handles its case best —
 it names the trait-bound alternative that *would* let Verum own the wording, and
-that is the pattern to follow when adding a fourth row.
+that is the pattern to follow when adding a row — with the caveat `E0624` adds
+above, that the alternative must be checked for enforceability, not just for
+existence.
 
 ### The spawn boundary is none of the three defence layers
 
@@ -359,7 +386,7 @@ number.
 | Put anything expressible as an equality bound in that form | The only route that produces a note with a span |
 | Always attach `on_unimplemented` to a trait with type parameters | Do not expose raw trait-resolution errors |
 | Always attach `do_not_recommend` to a recursive impl | Suppresses exposure of the cons list and the index types |
-| A **help or note** always shows both directions (widen the contract / fix the implementation) | With only one, an AI relaxes the contract mechanically. **`help` is unreachable from layer 3** — see below — so the rule is satisfied by whichever of the two rustc will emit |
+| A **help or note** always shows both directions (widen the contract / fix the implementation) | With only one, an AI relaxes the contract mechanically. **`help` is unreachable from layer 3** — see below — so the rule is satisfied by whichever of the two rustc will emit. **Exception, recorded rather than silent**: rustc-native diagnostics carry neither direction, because no attribute attaches to them. `E0624` (path 21) is the current instance |
 | The where clause goes on the method | On the impl, `on_unimplemented` is ignored |
 | One error, one cause | Avoids the tuple-type expansion cascading into several errors |
 

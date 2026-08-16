@@ -93,3 +93,43 @@ pub fn projection_reads_and_forges() -> app::domain::HiddenUser {
 #[cfg(feature = "p14-projection")]
 const _: fn(<app::domain::HiddenUser as fw::DomainRepr>::Repr) -> app::domain::HiddenUser =
     <app::domain::HiddenUser as fw::DomainRepr>::from_repr;
+
+// ---------------------------------------------------------------------------
+// #33 — the foreign-crate half.
+// ---------------------------------------------------------------------------
+
+/// P25 — the proof trait is implementable from **any** crate.
+///
+/// This must compile, and on its own it is the whole refutation of the bound
+/// gate: `fw::RepositoryProof` is a foreign trait and `TheirProof` is a local
+/// type, which is precisely the case the orphan rules permit. Sealing the trait
+/// is the standard answer and is **not available here** — `#[derive(Domain)]`
+/// expands inside the user's crate, so any impl the expansion writes to satisfy a
+/// seal is an impl a human can write by hand.
+///
+/// Note what this probe deliberately does *not* claim. It does not forge a
+/// `User`, because `UserRepr` is `pub(crate)` and unreachable from here (P5) — the
+/// Repr's visibility stops that independently. Conflating the two axes would let
+/// this pass for a reason that has nothing to do with the gate.
+#[cfg(feature = "p25-proof-forged-foreign")]
+pub struct TheirProof;
+
+#[cfg(feature = "p25-proof-forged-foreign")]
+impl fw::RepositoryProof for TheirProof {}
+
+/// P27 — the mechanism, from a foreign crate.
+///
+/// Must not compile. Expected `E0603`: the `Repr` is `pub(crate)`, so the name is
+/// unreachable here before the private constructor is ever reached. That is the
+/// same wall P5 measures, and it is worth stating plainly — for a foreign crate
+/// the confinement is not what does the work, the `Repr`'s visibility is. The
+/// mechanism's contribution is P26, inside the crate, where `pub(crate)` is wide
+/// open.
+#[cfg(feature = "p27-confined-foreign")]
+pub fn forge_confined_from_foreign_crate() -> app::confined::Account {
+    app::confined::Account::from_repr(app::confined::AccountRepr {
+        id: 1,
+        name: "attacker".to_owned(),
+        email: "attacker@example.com".to_owned(),
+    })
+}
