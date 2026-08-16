@@ -575,9 +575,22 @@ caller cannot override the mandated message either.
 > `private` **passes cleanly, lint table included** (measured).
 >
 > What makes it mandatory is the unit test
-> `seals_should_only_be_declared_through_the_macro` in `sealed.rs`, which **reads
-> its own file and rejects any `pub trait` not produced by the macro template.**
-> Confirmed by injecting a hand-written seal and watching it fail.
+> `seals_should_only_be_declared_through_the_macro` in `sealed.rs`. It reads
+> **every source file** and reports a `pub trait` whose name is **neither
+> declared through `seal!` nor re-exported by `lib.rs`** — a trait that is
+> unreachable downstream *and* carries no diagnostic floor, which is what makes
+> one usable as a seal. Both sets are derived from the declaration side
+> (`seal!` invocations, `pub use` lines), per `test.md` §9 rule 7.
+>
+> **Reachability is the property, not placement.** An earlier version asked "is
+> this `pub trait` inside a non-`pub` module?", which sounds equivalent. It is
+> not: `lib.rs` declares `mod domain; mod sealed; mod typelevel;`, all private,
+> so every file scope in the crate is already inside a non-`pub` module. Six
+> working seals passed that predicate — a file-scope trait, a private module in
+> its own file, `pub(super) mod`, and three more — and a downstream crate
+> compiled the forgeries (#32). Before that it read only its own file.
+>
+> Confirmed by injecting hand-written seals of each shape and watching them fail.
 
 ```rust,ignore   // fragment, not a complete item
 seal! {
