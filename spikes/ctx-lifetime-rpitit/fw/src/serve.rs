@@ -2,11 +2,16 @@
 //! server, and a client to drive it.
 //!
 //! The structural point this file exists to demonstrate is in `Svc::call`:
-//! `hyper::service::Service::Future` is a plain associated type with no lifetime
-//! parameter, so the service's future is effectively `'static`. `'req` therefore
-//! cannot flow *in* from hyper — it is created **inside** each request's own
-//! future, from a `Runtime` that future owns. Probe B4 is the failing form that
-//! grounds this rather than asserting it.
+//! `'req` does not flow *in* from hyper — it is created **inside** each request's
+//! own future, from a `Runtime` that future owns.
+//!
+//! **The `'static` here is this file's choice, not hyper's requirement.** B4b
+//! measures that a service carrying its own lifetime, with `type Future` bounded
+//! by it, is accepted by hyper's http1 builder. What hyper forbids is returning a
+//! future that borrows `&self` (B4a) — `Service::call(&self, ..)` offers nowhere
+//! to name that borrow. The `'static` below comes from the per-connection
+//! `tokio::spawn` further down. An earlier version of this comment said hyper
+//! forced it; that was wrong and B4b is the control that shows so.
 
 use std::net::SocketAddr;
 use std::pin::Pin;

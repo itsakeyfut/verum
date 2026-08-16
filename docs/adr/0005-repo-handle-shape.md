@@ -67,10 +67,25 @@ other sites link to it.
 
 ### Confirmation
 
-**Nothing enforces this today**, and that is the finding rather than an omission:
+**The escape is now measured, and both candidates are measured against it**
+(T-M1-02 / #14, `spikes/ctx-lifetime-rpitit/`, `bash run.sh`):
 
-* No `compile_fail` fixture asserts that a capability handle cannot outlive its
-  request. The escape compiles and runs.
+| Probe | What it does | Result |
+|---|---|---|
+| **E1** | `Repo<D, R, M>` as specified — no lifetime, so it owns its access and is `'static` — spawned out of the request | **passes = the defect.** Asserted at run time: the response returns, and 150 ms later the store reads `escaped@example.com` |
+| E2 | candidate 1, `RepoLt<'req, ..>`, under the same attack | `E0521` |
+| E3 | candidate 1 still serves an ordinary handler | passes |
+| E4a | candidate 2, `RepoPhantom<'req, ..>`, under the same attack | `E0521` |
+| E4b | candidate 2 still serves an ordinary handler | passes |
+
+So the decision is no longer between two unmeasured options: **both block the
+attack and neither breaks ordinary use.** What is still missing is the decision
+itself, and one coupling — the spike's `JobCtx` holds the store directly, so
+**#39 and #40 cannot be decided independently** (ADR-0006, probes F2 / F3).
+
+* No `compile_fail` fixture in `crates/verum` asserts that a capability handle
+  cannot outlive its request. E1 demonstrates the escape in a throwaway
+  workspace; the fixture that would keep it closed does not exist yet.
 * `spikes/doc-code-blocks` cannot check the usages either — with no declaration
   to transcribe, the stub carries a placeholder
   (`pub struct Repo<D, R, M>(PhantomData<fn() -> (D, R, M)>)`) that is marked

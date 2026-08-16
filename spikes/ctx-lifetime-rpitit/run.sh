@@ -159,6 +159,18 @@ probe D4   fail 'lifetime may not live long enough'      check -p app --features
 # nothing about leaking.
 probe D5a  fail 'not general enough'                     check -p app --features d5a-when-named-call
 probe D5b  fail 'not general enough'                     check -p app --features d5b-when-named-leak
+# D5c/D5d isolate `+ Send` for the named-`'req` form. D5c drops the bound and
+# nothing else: the leaking body type-checks, so #44's construction is real. D5d
+# awaits it from a `+ Send` position and is rejected.
+#
+# DO NOT read D5d as "the leak has no caller" — an earlier version of the README
+# did, and Tier-2 review refuted it by running the leak against the real server.
+# `Handler::handle` is `fn .. -> impl Future + Send`, not `async fn`, so a
+# synchronous body can drive a non-`Send` future beside the one it returns.
+# `.await` is the only thing that propagates the obligation. See RK-017; the
+# sync-body probe is NOT in this suite and should be added.
+probe D5c  pass 'Finished'                               check -p app --features d5c-when-named-leak-nosend
+probe D5d  fail 'not general enough'                     check -p app --features d5d-nosend-leak-from-handler
 echo
 
 echo "=== #39 — capability handles and 'req (measured, not decided) ==="
@@ -181,7 +193,7 @@ echo
 
 # §9-2 applied to the harness itself, not only to the tests it runs: without
 # this, deleting a `probe` line above leaves the suite green. Measured.
-EXPECTED_ROWS=19
+EXPECTED_ROWS=21
 if [[ $pass -ne $EXPECTED_ROWS && $fail -eq 0 ]]; then
     echo "FATAL: $pass rows ran, expected $EXPECTED_ROWS — a probe line was removed." >&2
     exit 1

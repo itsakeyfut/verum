@@ -71,6 +71,29 @@ declared.
 
 ### Confirmation
 
+**Measured in T-M1-02 / #14** (`spikes/ctx-lifetime-rpitit/`):
+
+* **A0** — `app` cannot *construct* a `Ctx`: `Ctx::new` is `pub(crate)` and the
+  attempt is `E0624`. That is the whole of what visibility buys.
+* **It is not sufficient.** In the spike `ErasedHandler::call` is a public trait
+  method, so `app` can `Box::leak` a `Runtime` and drive a handler with
+  `'req = 'static` — reaching a live `Ctx` without constructing one. **The
+  god-mode route is a supplier, not a constructor**, and blocking the constructor
+  does not block the supplier.
+* An earlier version of this record derived a coupling with ledger path 8 from
+  "every supplier of a `Ctx` imposes `+ Send`". **That premise is false and the
+  derivation is withdrawn**: `Handler::handle` returns a `+ Send` future but its
+  body is synchronous, so path 8's leak (D5c) is reachable from an ordinary
+  handler without any god-mode supplier (RK-017). The two paths may still interact,
+  but nothing measured shows it, and path 8 does not depend on path 9 staying
+  closed. See [`../specs/unverified-boundaries.md`](../specs/unverified-boundaries.md)
+  path 8.
+
+What is still missing is the sealed token itself: neither `Runtime` nor `Sealed`
+is declared anywhere, so there is no fixture asserting that a token cannot be
+forged.
+
+
 **Nothing enforces this today.**
 
 * Path 9 has no fixture. `docs/rules/test.md` §4 describes the intended test API

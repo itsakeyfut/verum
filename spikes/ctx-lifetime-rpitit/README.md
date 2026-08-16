@@ -5,20 +5,16 @@ hyper-util 0.1.20, http-body-util 0.1.5. 30 packages resolved, 28 of them
 dependencies, 21 not already in the root graph.
 
 ```bash
-bash run.sh          # 19 rows, each with its expected outcome and error text
+bash run.sh          # 21 rows, each with its expected outcome and error text
 ```
 
-> ### ⚠️ This is a measurement, not yet a verdict for the specs
+> ### The gate this spike set for itself is satisfied
 >
-> The four criteria below are answered and reproduce. **What none of it can do
-> yet is correct the specs**, because #43 (the spec code blocks contradict their
-> own prose and several do not compile) is open, and the first version of this
-> spike failed precisely there — it transcribed the `when` signature from the
-> spec incorrectly and built a whole verdict on the mis-transcription. See
-> "What the first version got wrong" below; the batting-average log entry for
-> 2026-08-16 in `docs/dev/maintenance-tasks.md` has the full account.
->
-> **Order: #43 → #38 → then re-derive the verdict from this harness.**
+> It read: *"#43 → #38 → then re-derive the verdict from this harness"*, because
+> the first version transcribed the `when` signature from an unchecked spec code
+> block and built a whole verdict on the mis-transcription. See "What the first
+> version got wrong" below. **Both are merged, the harness was re-run before the
+> specs were touched, and the verdict below is what it printed.**
 
 ---
 
@@ -45,7 +41,8 @@ results, each tied to a row:
    asserted at runtime) — which is #39, and #40's working candidate reopens it
    from a second direction (F2/F3).
 
-**Ledger path 8's mechanism is NOT resolved by this spike.** See below.
+**Ledger path 8's recorded mechanism is wrong, and a named `'req` variant is
+open** — reachable from an ordinary handler, measured in review. See below.
 
 ---
 
@@ -97,6 +94,8 @@ in `run.sh`.
 | **D4** | the same with the return type **free** | fail `lifetime may not live long enough` |
 | **D5a** | `'req` **named** rather than higher-ranked, **no leak attempted** | fail `not general enough` |
 | **D5b** | the same, now leaking the `Ctx` to an outer `Option` | fail `not general enough` |
+| D5c | the same leaking body with `+ Send` dropped and nothing else | **pass** — the construction is real |
+| **D5d** | D5c **awaited** from a `+ Send` position | fail `not general enough` |
 
 ### #39 / #40 — measured, not decided
 
@@ -144,32 +143,81 @@ RK-005's other two claims are confirmed as recorded: the unboxed
 `FnOnce(..) -> Fut` form does not compile (D1e), and lending a value **while
 capturing the same value** is a borrow error (D2, `E0499`).
 
-### Ledger path 8 — not resolved, and the earlier "correction" was wrong
+### Ledger path 8 — the recorded remedy is not the mechanism
 
-The recorded remedy is "fix the closure's return type to `Result<()>`". This
-spike cannot confirm or refute it, and an earlier version of this README claimed
-to have refuted it. What is measured:
+The remedy three documents record is "fix the closure's return type to
+`Result<()>`". What is measured:
 
-| Probe | Return type | `Ctx` lifetime | Result |
-|---|---|---|---|
-| D3 | `Result<()>` | higher-ranked | rejected `E0308` |
-| D4 | **free** | higher-ranked | rejected `lifetime may not live long enough` |
-| D5a | `Result<()>` | **named** — *no leak attempted* | rejected `not general enough` |
-| D5b | `Result<()>` | **named** — leaking | rejected `not general enough` |
+| Probe | Return type | `Ctx` lifetime | `+ Send` | Result |
+|---|---|---|---|---|
+| D3 | `Result<()>` | higher-ranked | yes | rejected `E0308` |
+| D4 | **free** | higher-ranked | yes | rejected `lifetime may not live long enough` |
+| D5a | `Result<()>` | **named** — *no leak attempted* | yes | rejected `not general enough` |
+| D5b | `Result<()>` | **named** — leaking | yes | rejected `not general enough` |
+| **D5c** | `Result<()>` | **named** — leaking | **no** | **compiles** |
+| **D5d** | D5c called from a handler | | yes | rejected `not general enough` |
 
-**D5a is what settles it**: the named-lifetime form cannot even be *called* from
-inside a `+ Send` handler future, so D5b's rejection says nothing about leaking.
-No measured variant leaks the `Ctx` from a handler, and the probes do not
-separate which property is doing the work.
+For the **specified** signature the remedy is redundant but harmless: D3 and D4
+show the return type and the higher-ranked `Ctx` each reject `Ok(ctx)` on their
+own. For a **named** `'req` — which is what an implementer reaches for when
+"making the lifetime explicit" — the return type does nothing at all. D5c is that
+form, and it type-checks.
 
-Two things this spike does **not** cover and which the design review flagged:
+**What closes the specified signature is the higher-ranked `Ctx`.** D4 isolates
+it: strip the return-type constraint and the form is still rejected. The remedy
+three documents (four, counting the ledger row itself) recorded — "fix the return
+type to `Result<()>`" — is real but redundant.
 
-- the scope hands out a **capability handle** (`c.users()`), and that handle has
-  no lifetime — the same hole as E1, reachable from inside `when`. Not probed
-  here; belongs with #39.
-- the real `when` yields `Ctx<'a, WhenScope<E, C, I>>`, an **elevated**
-  capability set. This spike hands back the same `E`, so nothing about
-  escalation is measured.
+**A named `'req` is closed by nothing.** D5c type-checks, and it is **reachable
+from an ordinary handler**.
+
+> ### ⚠️ `+ Send` does not close this path — withdrawn after Tier-2 review
+>
+> An earlier version of this section concluded that `+ Send` was the closer and
+> that D5c had no caller, reasoning that `Handler::handle` and
+> `ErasedHandler::call` both return `Send` futures. **That inference is wrong.**
+>
+> `Handler::handle` is `fn .. -> impl Future<..> + Send`, **not `async fn`**
+> (`fw/src/erase.rs:25-29`). The bound constrains only what the *returned future*
+> holds across awaits. The body is an ordinary synchronous body that already holds
+> `Ctx<'req, Self>` with `'req` **named** — D5c's precondition — and it can drive
+> the leaking future to completion before it ever builds the future it returns:
+>
+> ```text
+> fn handle<'req>(&self, req, ctx: Ctx<'req, Self>) -> impl Future<..> + Send {
+>     let out = block_on(leak_body(ctx, req));   // no await — no Send obligation
+>     async move { out }
+> }
+> ```
+>
+> Two review agents built this independently and ran it against the real
+> multi-thread hyper server; the store was mutated through a `Ctx` that outlived
+> its `when` scope. Safe Rust, stdlib only (`Waker::noop`, stable in 1.85), no
+> god-mode constructor, no relaxed `Send`.
+>
+> D5d fails only because it **awaits** — `.await` is the only thing that
+> propagates the obligation. **The probe measured one call shape and the prose
+> generalised it to "no caller"** — the same failure this README documents about
+> its own first version, one level up. Recorded as RK-017.
+>
+> **The sync-body probe is not in this suite.** It should be, before anyone
+> relies on path 8 again.
+
+`+ Send` *is* the discriminator for the awaited form, measured both directions
+(D5a fails with it, passes without; D5c passes without it, fails with). That is a
+fact about HRTB inference, not containment.
+
+**The remedy is a constraint on the signature, not a bound**: `when` must be
+generated with the elided form and never with a named `'req`. `when` is
+macro-generated, so that is enforceable at defence layer 1.
+
+#### #44 was right
+
+#44 recorded this path as leaking, "compiled and run". An earlier version of this
+README reconciled that away as *"both are correct — #44 measured the
+construction, this spike measured reachability"*. **There was nothing to
+reconcile.** The leak is reachable; #44's measurement stands unqualified and this
+spike's contradiction of it was the error.
 
 ### (b) holds; the two supporting facts are not what the first version said
 
@@ -296,7 +344,7 @@ by reading:
 | gut `d1_when_lends`'s body | B5+ `pass → fail` |
 | gut `e1_handle_escapes`'s body | B5+ `pass → fail` |
 | delete one runtime test | B5+ count assertion (`7 passed`) |
-| **delete one `probe` line from `run.sh`** | `FATAL: 18 rows ran, expected 19` |
+| **delete one `probe` line from `run.sh`** | `FATAL: 20 rows ran, expected 21` |
 | a feature-name typo in `#[cfg(..)]` | `unexpected_cfgs = "deny"`, all three compilation units |
 
 The last two closed holes the first version had. Every endpoint in

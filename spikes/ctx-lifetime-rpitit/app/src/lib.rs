@@ -546,6 +546,51 @@ pub fn d5b_when_named_leak<'req, E: Endpoint>(
     }
 }
 
+/// D5c — reconciles this spike with #44, which reported the opposite result.
+///
+/// #44 measured "with a named `'req` the scope leaks through an out-parameter
+/// while the return type stays `Result<()>` — compiled and run". D5a/D5b
+/// measured the same shape as **not callable**. Both are right: the difference
+/// is `+ Send`, and this probe isolates it by dropping that bound and nothing
+/// else. Expected to **compile** — the leaking body itself is well-typed.
+///
+/// What it does *not* show is that the leak is reachable; that is D5d.
+#[cfg(any(feature = "d5c-when-named-leak-nosend", feature = "d5d-nosend-leak-from-handler"))]
+pub fn d5c_when_named_leak_nosend<'req, E: Endpoint>(
+    ctx: Ctx<'req, E>,
+    req: Req,
+) -> impl Future<Output = Result<String>> + 'req {
+    async move {
+        let mut escaped: Option<Ctx<'req, E>> = None;
+        ctx.when_named::<EmailChanged, _>(&req, async |c, _r| {
+            escaped = Some(c);
+            Ok(())
+        })
+        .await?;
+        let leaked = escaped.ok_or_else(|| Error("condition did not hold".into()))?;
+        let user = leaked.users().find(req.id)?;
+        Ok(user.email().to_owned())
+    }
+}
+
+/// D5d — D5c **awaited** from a `+ Send` position.
+///
+/// Expected to **fail**: `.await` is what propagates the `Send` obligation.
+///
+/// DO NOT read this as "D5c has no caller". An earlier README did, and Tier-2
+/// review refuted it: `Handler::handle` is `fn .. -> impl Future + Send`, not
+/// `async fn`, so a synchronous handler body can drive D5c to completion with
+/// `block_on` beside the future it returns — measured, and it mutates the store
+/// through an escaped `Ctx`. See RK-017. **That sync-body probe is not in this
+/// suite and should be added.**
+#[cfg(feature = "d5d-nosend-leak-from-handler")]
+pub fn d5d_nosend_leak_from_handler<E: Endpoint>(
+    ctx: Ctx<'_, E>,
+    req: Req,
+) -> impl Future<Output = Result<String>> + Send {
+    async move { d5c_when_named_leak_nosend(ctx, req).await }
+}
+
 /// E1 — the capability handle in the shape `capability-system.md:190`
 /// specifies. No lifetime parameter, so it owns its access and is `'static`.
 /// Expected to **compile and run**: the `Ctx` is correctly denied `'static`

@@ -44,21 +44,61 @@ tokio::spawn(async move { ctx.email().send(...).await });
 //           ^^^^^^^^^^ error: `ctx` does not live long enough
 ```
 
-That closes the following routes.
+That closes the following routes — **both measured** in T-M1-02 / #14
+(`spikes/ctx-lifetime-rpitit/`, probes C1 and C3, `bash run.sh`).
 
-| Route | Why it is closed |
-|---|---|
-| Carrying a capability out of the request via `tokio::spawn` | `'static` is not satisfied |
-| Handing it to a `static Sender<Ctx<E>>` and exercising it in a long-lived worker | Same |
+| Route | Why it is closed | Measured |
+|---|---|---|
+| Carrying a capability out of the request via `tokio::spawn` | `'static` is not satisfied | C1 — `E0521` |
+| Handing it to a `static Sender<Ctx<E>>` and exercising it in a long-lived worker | Same | C3 — `E0521` |
+
+C1's exact text, on rustc 1.85.0, is recorded in the spike's README; it seeds the
+M3 UI test. **`E0521` is a rustc diagnostic, not a trait-bound one**, so
+`#[diagnostic::on_unimplemented]` cannot reword it — this route's error is
+whatever rustc says.
 
 **`Send` is preserved.** For the handler's future to load onto hyper's
 multi-thread runtime it must be `Send`, so `Ctx` must be too. Dropping `'static`
 alone achieves the goal.
 
+> **`Send` is not a second containment bound.** It was briefly recorded here as
+> also closing ledger path 8. That is withdrawn: `Handler::handle` is
+> `fn .. -> impl Future + Send`, not `async fn`, so the bound reaches only what the
+> *returned future* holds across awaits — a synchronous body can drive a non-`Send`
+> future to completion beside it. `'req` is the containment mechanism; `Send` is a
+> hyper requirement. See RK-017 and
+> [`conditional-effects.md`](./conditional-effects.md) §What actually closes the
+> scope.
+
 > An invariant brand lifetime (the GhostCell approach) would seal the escape
 > completely, but the error messages become extremely hard to read, colliding head
 > on with [`diagnostics.md`](./diagnostics.md)'s goals. `'req` was judged
-> sufficient.
+> sufficient. **The question has not had to be reopened**: both cheaper candidates
+> for #39 block their attack (E2 / E4a), so nothing yet forces the expensive one.
+
+### The erasure layer builds the `Ctx` — a signature no document describes
+
+A `Ctx<'req, E>` **cannot cross the erasure boundary**, for two independent
+reasons (measured, B2a / B2b / B2c):
+
+* the `Self` in the parameter position blocks vtable dispatch (B2b) — this is
+  the reason, and it is about `Ctx<'req, Self>`;
+* the probe's trait also carries `: Endpoint`, and `Endpoint: Sized` makes it
+  dyn-incompatible **independently of the `Ctx` parameter** (B2a).
+
+**B2a measures nothing about `Ctx`** — delete the `Ctx` argument and the same
+E0038 appears at the same span, pointing at the supertrait. It is listed because
+an implementer will hit it first, not because it is a second reason. (An earlier
+version of this section called the two "independent reasons a `Ctx` cannot cross
+the boundary", which reintroduced exactly the conflation the spike's README
+records itself as having made and corrected.)
+
+B2c is the control: a `Ctx` with a *concrete* type parameter sits in a trait
+object fine, so the real constraint is about `Self`, not about `Ctx`.
+
+So the erased handler takes the `Runtime` and **constructs the `Ctx` on the far
+side of the boxing.** The user-facing signature above is real; there is a second
+one underneath it, and until #14 no document had it.
 
 ### Provide an alternative route for spawning
 
@@ -75,6 +115,26 @@ ctx.spawn::<SendEmailJob>(|jctx| async move { ... });
 
 **Removing "the easier unchecked route" requires providing a checked alternative
 at the same time as blocking.**
+
+> ### ⚠️ The shape above does not compile (measured, #14 probe F1)
+>
+> A child that **borrows** the parent's context fails with `E0521` — the same
+> error, for the same reason, as the `tokio::spawn` it is offered as the
+> alternative to. So the checked alternative this section promises does not
+> currently exist, which is the state ARK-002 warns produces: a blocked route
+> with nothing beside it.
+>
+> | Probe | Shape | Result |
+> |---|---|---|
+> | **F1** | the shape above — `jctx` borrows the parent | `E0521` |
+> | F2 | an **owned** `JobCtx<Job>` handed to the child | compiles and runs |
+> | F3 | that `JobCtx` spawned onward from inside the job | compiles — **the cost** |
+>
+> F2 works, and F3 is what it costs: an owned `JobCtx` is `'static`, so a
+> capability-carrying value with no request bound now exists — which is precisely
+> what `'req` was introduced to prevent. **The choice between them is #40's**, and
+> #40 cannot be settled independently of #39: the spike's `JobCtx` holds the store
+> directly, so adopting a lifetime-bound `Repo` does not help if F2 is taken.
 
 ### Seal the construction route
 
@@ -324,7 +384,15 @@ let elevated = ctx.when::<C, _>(.., async |ctx, ..| Ok(ctx)).await?;
 //                                                   ^^^^^^^ type error
 ```
 
-Detail in [`conditional-effects.md`](./conditional-effects.md).
+> **This is true of the signature as written, and it is not the mechanism.** The
+> higher-ranked `Ctx` rejects `Ok(ctx)` on its own (D4 isolates it), so the return
+> type is redundant. With a *named* `'req` the return type stops nothing and
+> **nothing else does either** — D5c compiles and the leak is reachable from an
+> ordinary handler (measured, #14). The remedy is that the macro must emit the
+> elided form; see [`unverified-boundaries.md`](./unverified-boundaries.md) path 8.
+
+Detail in [`conditional-effects.md`](./conditional-effects.md) §What actually
+closes the scope.
 
 ---
 
