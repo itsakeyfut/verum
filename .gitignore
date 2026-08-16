@@ -11,7 +11,11 @@ spikes/**/spike.db
 spikes/**/Cargo.lock
 
 # Spec private docs
-docs/ 
+docs/dev/
+docs/roadmap/
+
+# Python bytecode from the spike harnesses.
+__pycache__/
 
 # Private local files
 TODO.md

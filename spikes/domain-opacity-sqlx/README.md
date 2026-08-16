@@ -24,7 +24,7 @@ authority; if it disagrees with a sentence below, the sentence is wrong.
    produce.
 
 Everything the alternatives were measured to do is in `docs/specs/persistence.md`
-§判定. **No alternative measured here improves on the status quo**, and the closing
+§Verdict. **No alternative measured here improves on the status quo**, and the closing
 mechanism is #18's decision, not this spike's.
 
 ## The probe table

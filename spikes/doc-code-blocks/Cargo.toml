@@ -1,0 +1,17 @@
+# #43 — does every Rust code block in docs/ compile?
+#
+# An INDEPENDENT workspace, for the same reason as the other spikes: this pulls
+# `crates/verum` in as a path dependency and adds a stub crate that exists only
+# to give the docs' code blocks something to resolve against. Neither belongs in
+# the production graph.
+[workspace]
+resolver = "3"
+members = ["stub"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace.lints.rust]
+unexpected_cfgs = "deny"
