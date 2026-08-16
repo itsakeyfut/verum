@@ -88,7 +88,7 @@ fn contract_violations_should_not_compile() {
 | `ctx.orders()` for an undeclared domain | The Architecture Contract | **implemented** |
 | `tokio::spawn(.. ctx ..)` | `Ctx<'req>`'s lifetime constraint | designed |
 | Hand-written `impl Endpoint` / `impl Includes` | Sealed traits | **implemented** (`Includes`) |
-| Returning `Ok(ctx)` from `when` | Preventing scope leakage | designed |
+| Returning `Ok(ctx)` from `when` | **The higher-ranked `Ctx` in the `Fn`-trait position** — *not* the closure's return type | designed. T-M1-02 measured that the return type is redundant, and that a **named `'req` leaks the scope through an out-parameter while the return type stays `Result<()>`** |
 
 **The point is to prove there is no easier unchecked route around it**
 ([`../specs/unverified-boundaries.md`](../specs/unverified-boundaries.md)). If

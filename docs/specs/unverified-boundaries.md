@@ -138,7 +138,7 @@ alternative pushes people onto unchecked routes).
 | 6 | Carrying `Ctx` out with `tokio::spawn` | `Ctx<'req, E>` (not `'static`; `Send` preserved). ⚠️ The promised alternative `ctx.spawn::<Job>` **does not compile** (F1) | **Closed in the First PoC** — measured, T-M1-02 probe C1 (`E0521`) |
 | 7 | Handing it to a `static Sender<Ctx<E>>` | Same, and the same missing alternative | **Closed in the First PoC** — measured, probe C3 (`E0521`) |
 | 8 | Leaking out of a `when` scope with `Ok(ctx)` | **Not the return type** — the higher-ranked `Ctx` closes the specified signature; see below | **Closed for the specified signature. ⚠️ OPEN for a named `'req`** — reachable from an ordinary handler today (measured) |
-| 9 | `Ctx::for_test()` as a god-mode constructor | Require a sealed `Runtime` token; testing goes through an API with a fixed endpoint type | **Closed in the First PoC** — partially measured (below) |
+| 9 | `Ctx::for_test()` as a god-mode constructor | Require a sealed `Runtime` token ([ADR-0006](../adr/0006-runtime-sealed-token.md), still `proposed`); testing goes through an API with a fixed endpoint type | ⚠️ **Stated, not closed.** What T-M1-02 measured is **visibility** — `Ctx::new` is `pub(crate)`, so `app` gets `E0624`. **No seal was measured**, and visibility alone was measured to leak (note below) |
 | 10 | A `PgPool` on the endpoint struct | `#[endpoint]` rejects anything but a unit struct | **Closed in the First PoC** |
 | 11 | Passing a `dyn Repository` to a service (the type parameters vanish) | Do not expose `dyn Repository`; parameterise the service by capabilities too | **Closed in the First PoC** |
 | 12 | A hand-written `impl Endpoint` declaring arbitrary capabilities | Seal `Endpoint` | **Closed in the First PoC** |
@@ -337,7 +337,15 @@ sealed-token design is [ADR-0006](../adr/0006-runtime-sealed-token.md), still
 |---|---|---|
 | P1 | `Debug` on the domain | prints every field, no capability |
 | P2 | a free function taking `&Domain` | reads whatever it likes |
-| P3 | a `Projection<D, F>`'s `Debug` | the same — `F` is a type parameter, so no derive can enumerate it |
+| **P4** | a `Projection<D, F>`'s `Debug` | **narrows to the declared set** — `Projection { email: "e@x" }`, `secret` never printed |
+
+> **P4 replaces an earlier P3 row that said the opposite.** The first version of
+> #15 recorded "the same — `F` is a type parameter, so no derive can enumerate
+> it", and that was withdrawn under review: the derive emits one impl **per field
+> of the Domain**, which it can see, and a fixed recursive walk resolves `F` at
+> monomorphisation. So a projection **does** narrow its own `Debug`; what it
+> cannot do is stop the `Domain` value's, which is P1 and is what keeps this path
+> open.
 
 **This is not an argument against the getters.** It is the boundary of what
 "enforced" means for `reads`, and it is the boundary `mutates` already has:

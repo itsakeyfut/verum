@@ -55,7 +55,16 @@ That closes the following routes — **both measured** in T-M1-02 / #14
 C1's exact text, on rustc 1.85.0, is recorded in the spike's README; it seeds the
 M3 UI test. **`E0521` is a rustc diagnostic, not a trait-bound one**, so
 `#[diagnostic::on_unimplemented]` cannot reword it — this route's error is
-whatever rustc says.
+whatever rustc says. ([`persistence.md`](./persistence.md) handles the analogous
+case better: it names the trait-bound alternative that *would* let Verum own the
+wording. The full list is in
+[`diagnostics.md`](./diagnostics.md)「Rustc-native diagnostics Verum cannot reword」.)
+
+> **And the checked alternative offered below produces the same `E0521`** — see
+> §Provide an alternative route for spawning, probe F1. The two facts are fifty
+> lines apart and each is weaker read alone: this route is blocked by an error
+> Verum cannot phrase, *and* the route it is blocked in favour of does not
+> compile.
 
 **`Send` is preserved.** For the handler's future to load onto hyper's
 multi-thread runtime it must be `Send`, so `Ctx` must be too. Dropping `'static`
@@ -100,6 +109,14 @@ So the erased handler takes the `Runtime` and **constructs the `Ctx` on the far
 side of the boxing.** The user-facing signature above is real; there is a second
 one underneath it, and until #14 no document had it.
 
+> **What makes `'req` mean "request" is not in the signature.** The spike's
+> `serve.rs` clones the `Runtime` **into each request future**, and `'req` is the
+> borrow of *that clone*. A `Ctx` borrowing a server-lived `Runtime` would satisfy
+> the recorded signature exactly, be non-`'static` exactly as required, and still
+> span the whole process. The lifetime carries the guarantee only because of where
+> the borrowed value lives — so this constraint belongs in the derive's generated
+> code, not in a convention.
+
 ### Provide an alternative route for spawning
 
 Blocking it alone leaves the user with no way to avoid `tokio::spawn`. A
@@ -138,7 +155,13 @@ at the same time as blocking.**
 
 ### Seal the construction route
 
-`Ctx`'s constructor requires a sealed `Runtime` token.
+`Ctx`'s constructor requires a sealed `Runtime` token — **designed, not measured.**
+T-M1-02 measured the *visibility* half only (`Ctx::new` is `pub(crate)`, so a
+downstream crate gets `E0624`), and measured that visibility alone leaks: with a
+public `ErasedHandler::call`, a `Runtime` can be `Box::leak`ed and a handler
+driven at `'req = 'static` without constructing a `Ctx` at all. The token is
+[ADR-0006](../adr/0006-runtime-sealed-token.md), still `proposed`; ledger path 9
+carries the gap.
 
 ```rust,ignore   // fragment, not a complete item
 impl<'req, E: Endpoint> Ctx<'req, E> {

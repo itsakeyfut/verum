@@ -386,9 +386,16 @@ That does not solve dyn compatibility, so **the derive generates an object-safe
 erasure layer.**
 
 ```rust,ignore   // fragment, not a complete item
-fn call(&self, req: Request<Body>)
+fn call(&self, rt: &Runtime, req: Request<Body>)
     -> Pin<Box<dyn Future<Output = Response> + Send + '_>>;
 ```
+
+**Note the `Runtime` parameter.** A `Ctx<'req, E>` cannot cross the erasure
+boundary at all, so the erased handler takes the `Runtime` and **builds the
+`Ctx` on the far side of the boxing** — without it there is no source for
+`'req`. Measured in T-M1-02 (#14); the reasoning is in
+[`capability-system.md`](./capability-system.md)「The erasure layer builds the
+`Ctx` — a signature no document describes」.
 
 The router holds `dyn ErasedHandler`. The middleware chain is under the same
 constraint, so [`runtime-stack.md`](./runtime-stack.md)'s line estimates have to
