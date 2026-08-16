@@ -30,14 +30,36 @@ FENCE = re.compile(r"^```(rust|rs)(?:,(.*))?\s*$")
 DOCS = pathlib.Path(__file__).resolve().parents[2] / "docs"
 
 
+ANY_FENCE = re.compile(r"^(`{3,})")
+
+
 def blocks(root: pathlib.Path):
-    """Yield every fenced Rust block under `root`, with its tag and location."""
+    """Yield every fenced Rust block under `root`, with its tag and location.
+
+    Every fence is tracked, not only the Rust ones. A ```text block that shows
+    fence syntax — ADR-0003 documents the tag vocabulary that way — otherwise
+    has its contents read as real fences, and the harness reported a
+    `compile_fail` block that compiles. Found by the harness, in the document
+    describing the harness.
+    """
     for path in sorted(root.rglob("*.md")):
         lines = path.read_text().split("\n")
         i = 0
         while i < len(lines):
             m = FENCE.match(lines[i])
             if not m:
+                outer = ANY_FENCE.match(lines[i])
+                if outer:
+                    # A non-Rust fence. Skip past its close — and match the
+                    # backtick count, because a block that *shows* fence syntax
+                    # opens with ```` and contains ``` lines that are content,
+                    # not fences. ADR-0003 is exactly that document.
+                    n = len(outer.group(1))
+                    j = i + 1
+                    while j < len(lines) and not re.match(r"^`{%d,}" % n, lines[j]):
+                        j += 1
+                    i = j + 1
+                    continue
                 i += 1
                 continue
             j = i + 1

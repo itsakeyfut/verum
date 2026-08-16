@@ -91,7 +91,7 @@ higher-ranked lifetimes into one. A stub written from memory would bake the same
 class of error into every block it checks. When a block fails against this stub,
 the fix is either the block or the spec — never a quiet adjustment here.
 
-## The harness was wrong four times
+## The harness was wrong five times
 
 Each was found by suspecting the harness rather than the documents
 (`docs/rules/test.md` §9-6):
@@ -102,6 +102,7 @@ Each was found by suspecting the harness rather than the documents
 | `extract.py` resolved `docs/` relative to the working directory | the empty-scan `FATAL` fired |
 | the ❌ heuristic read three lines of prose above the fence | all seven hits it produced were false positives |
 | mixed ✅/❌ blocks were collapsed to `compile_fail` | adding the mixed check moved 25 blocks |
+| fence length was not matched, so a ```` ```text ```` block *showing* fence syntax had its contents read as fences | `docs/adr/0003` — the document describing this harness — reported a `compile_fail` block that compiles |
 
 The first is `docs/rules/test.md` §9-4 exactly — the rule this repository wrote
 after the same class opened ten times.
