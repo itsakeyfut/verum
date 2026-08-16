@@ -86,13 +86,28 @@ fn contract_violations_should_not_compile() {
 | Assigning `user.email = v` directly | Domain opacity | designed |
 | A `pub` field on a domain | The macro's layer-1 check | designed |
 | `ctx.orders()` for an undeclared domain | The Architecture Contract | **implemented** |
-| `tokio::spawn(.. ctx ..)` | `Ctx<'req>`'s lifetime constraint | designed |
+| `tokio::spawn(.. ctx ..)` | `Ctx<'req, E>` is not `'static` | **measured** — T-M1-02 probe C1, `E0521` (ledger path 6). The promised alternative `ctx.spawn::<Job>` does **not** compile (#40) |
 | Hand-written `impl Endpoint` / `impl Includes` | Sealed traits | **implemented** (`Includes`) |
 | Returning `Ok(ctx)` from `when` | **The higher-ranked `Ctx` in the `Fn`-trait position** — *not* the closure's return type | designed. T-M1-02 measured that the return type is redundant, and that a **named `'req` leaks the scope through an out-parameter while the return type stays `Result<()>`** |
 
 **The point is to prove there is no easier unchecked route around it**
-([`../specs/unverified-boundaries.md`](../specs/unverified-boundaries.md)). If
-even one case compiles, that is a hole in the spec.
+([`../specs/unverified-boundaries.md`](../specs/unverified-boundaries.md)). If a
+case compiles, that is a hole in the spec.
+
+> **M1 found a route this table cannot close, and #18 moved the target because of
+> it.** Ledger **path 8** is marked ⚠️ OPEN for a named `'req` — the last row of
+> the table records it: the higher-ranked `Ctx` closes the *specified* signature, and an
+> implementer who writes `'req` out by hand reopens it while still satisfying
+> every rule as written. `+ Send` does not help, because a synchronous handler
+> body runs outside any `.await` (RK-017).
+>
+> So "no route walks around it" is not something this table can promise. What is
+> promised instead is the ledger's fallback criterion — **every route is either
+> closed here or recorded in `unverified-boundaries.md` and emitted in the AI
+> Context.** A route may not be absent from both.
+>
+> Other routes are argued to be open and are **not yet recorded**; #44 is where
+> that is settled. Until it lands, this file states only what the ledger states.
 
 ### Update `.stderr` deliberately
 
