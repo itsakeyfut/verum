@@ -308,6 +308,14 @@ so no wording Verum writes reaches the user.
 | `E0615` / `E0609` | a field access on an opaque domain (T-M1-01 / #13) | [`persistence.md`](./persistence.md) |
 | `E0521` | a capability borrowed across `tokio::spawn` (T-M1-02 / #14) | [`capability-system.md`](./capability-system.md) |
 | `implementation of AsyncFnOnce is not general enough` | a higher-ranked `Ctx` in an `Fn`-trait position (T-M1-02 / #14) | [`conditional-effects.md`](./conditional-effects.md) |
+| `E0282` — type annotations needed | `\|ctx\| async move { .. }` where the returned future borrows the argument; `async \|ctx\| { .. }` compiles (T-M1-07 / #37) | [`handler-rules.md`](./handler-rules.md) Rule 4 |
+| `E0407` — method is not a member of trait | a helper placed beside `handle` in the observed `impl` block (T-M1-07 / #37) | [`unverified-boundaries.md`](./unverified-boundaries.md) path 22 |
+
+**Two of these have no trait-bound alternative.** The pattern above — "name the
+bound that *would* let Verum own the wording" — does not apply to `E0407`: "put
+the helper somewhere else" is not expressible as a bound. Worse, the move
+`E0407` correctly recommends is the one that makes the effect invisible to the
+scan, and no wording Verum controls can say so.
 
 The third is the worst of them: it names no type the user wrote, and #14
 promoted it to a first-class footgun. `persistence.md` handles its case best —

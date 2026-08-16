@@ -372,7 +372,7 @@ Reproduce: `spikes/reads-getter-enforcement/` (`bash run.sh`). Decision in
 | 19 | Bypassing field granularity with `creates` + `deletes` (an upsert) — `kind: upsert_granularity` | The derive rejects declaring both for one domain / `create` takes new IDs only | **Deferred (stated)** |
 | 20 | `Condition::holds` unlocks everything by returning `true` | **Impossible in principle** | **Permanently stated** |
 | 23 | **`Debug` / `Serialize` / a free function reads a field the endpoint did not declare in `reads`** — `kind: uncapped_read` | Capability-check the getters (measured to work) and accept that these routes are outside them. A `Projection`'s **own** derived `Debug` does narrow to the declared set (#15, P4), but the `Domain` value still exists and its `Debug` and any free function taking `&Domain` reach every field | **Stated** (measured, #15) |
-| 22 | **The `observed_effects` scan does not reach a service body** (a consequence of the Q-A decision to scan `handle` only) | Annotate every effect-carrying item and take the transitive closure at build time (a future form). For now, state it with `scope: "handle_only"` and `deferred` | **Stated** (Q-A / 2026-08-15) |
+| 22 | **The `observed_effects` scan is neither complete nor sound.** *(a)* It cannot leave the item it is attached to — a free associated function taking `&ctx`, a helper in a sibling `impl`, and **an effect produced by a `macro_rules!` expansion** (the last is unreachable even with cross-item analysis, since the macro may come from another crate). *(b)* Within the item it matches by **spelling** — the handler parameter named anything but `ctx` voids every key at once; `let repo = ctx.users()` and UFCS are missed. *(c)* It runs **before cfg-stripping**, so it reports effects from code that is never compiled | (a) annotate every effect-carrying item and take the transitive closure at build time (a future form); (b) is closable in the scanner and at layer 1; (c) has no fix — the tokens are all there is. **`scope: "handle_only"` overstates (a) and says nothing about (b) or (c)** and needs replacing | **Stated** (Q-A / 2026-08-15; **rewritten by T-M1-07 / #37**, compile-verified. Enumeration is of *observed* classes, not a census) |
 
 ---
 
@@ -528,7 +528,7 @@ An unchecked boundary is **always** emitted in the AI Context.
       },
       {
         "kind": "service_body",
-        "detail": "the observed_effects scan covers only the inside of handle; effects in a service body do not appear in the lower bound (path 22)",
+        "detail": "the observed_effects scan is neither complete nor sound: it cannot leave its own item (free functions, sibling impls, macro expansions), it matches receivers by spelling (a renamed ctx parameter voids every key), and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
         "permanent": false
       }
     ]

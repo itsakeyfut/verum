@@ -8,7 +8,7 @@ Related: [`unverified-boundaries.md`](./unverified-boundaries.md).
 
 ## The three to settle first
 
-### ~~Q-A. Whether to adopt "generate the contract from the implementation"~~ → **decided (2026-08-15)**
+### ⚠️ Q-A. Whether to adopt "generate the contract from the implementation" — **decided 2026-08-15, REOPENED 2026-08-16**
 
 **Adopt it — but not as a replacement for type enforcement. Keep both and make
 the difference the detector.**
@@ -21,9 +21,9 @@ two solves exactly the open problem in §Detecting over-declaration below.**
 | Decided | Contents |
 |---|---|
 | Approach | Keep type enforcement as it is, plus generate `observed_effects` by scanning `handle`'s tokens |
-| Scope | The First PoC covers **`handle` only**, stated in the AI Context as `scope: "handle_only"` |
+| Scope | The First PoC covers **one item — and not all of it** (T-M1-07: the scan matches receivers by spelling and cannot follow a call into another item), stated in the AI Context as `scope: "handle_only"` |
 | Over-declaration | **CI fails.** None of the three defence layers — a fourth mechanism at build time. The `@service` escape records its own use |
-| Verifying the premise | Added to Phase 1 as spike **T-M1-07** (whether token scanning works is unverified) |
+| Verifying the premise | **Ran 2026-08-16 as T-M1-07 (#37): the premise does not hold.** Three of five contract keys recover; the scan is neither complete nor sound. Originally added to Phase 1 as spike **T-M1-07** (whether token scanning works is unverified) |
 
 The full account and the four rejected options are in
 [`effect-inference.md`](./effect-inference.md) §Decision (Q-A).
@@ -79,7 +79,7 @@ and violation rate.
 | 5 | How is the capability system designed? | `Ctx<'req, E>` is parameterised by the contract, and checked in an **extension trait**'s where clause | [`capability-system.md`](./capability-system.md) |
 | 6 | How is a GET's read-only guarantee proved? | `Endpoint<Mutates=(), Creates=(), Deletes=()>` plus **a compile-time assertion from the derive** (a blanket impl cannot do it) | [`rust-type-model.md`](./rust-type-model.md) |
 | 8 | How is the architecture contract enforced? | Put `Self::Owner: Includes<User>` in the method's where clause (`Includes`'s subject is the endpoint type — [ADR-0001](../adr/0001-includes-is-implemented-on-the-endpoint.md)) | [`architecture-contract.md`](./architecture-contract.md) |
-| Q-A | Whether to generate the contract from the implementation | **Keep both and make the difference the detector.** Type enforcement = upper bound (bypasses); generation = lower bound (lies). Over-declaration fails CI. Scope is `handle` only in the First PoC. **The premise is measured in T-M1-07** | [`effect-inference.md`](./effect-inference.md) |
+| Q-A | Whether to generate the contract from the implementation | **Keep both and make the difference the detector.** Type enforcement = upper bound (bypasses); generation = lower bound (lies). Over-declaration fails CI. Scope is `handle` only in the First PoC. ⚠️ **REOPENED 2026-08-16** — T-M1-07 (#37) measured the premise and it does not hold: three of five keys recover, and the scan is neither complete nor sound. | [`effect-inference.md`](./effect-inference.md) |
 | 10 | Is a proc macro alone enough? | Three defence layers (macro / equality bound / trait bound) **plus a build-time token scan** (added by the Q-A decision; a fourth mechanism producing the difference between declaration and implementation, outside the proc macro). A custom linter is needed only for escape hatches and raw SQL | [`diagnostics.md`](./diagnostics.md) |
 
 ### Technical constraints settled by compiling
@@ -284,7 +284,7 @@ While `set_<field>` is hand-written per field in both the trait and the impl:
 
 Generating the trait definition should be moved ahead of generating the impl.
 
-### ~~Detecting over-declaration~~ → **solved by the Q-A decision**
+### ⚠️ Detecting over-declaration — **was marked solved by the Q-A decision; reopened by T-M1-07**
 
 A declared but unused capability is not an error (a consequence of the contract
 being an upper bound). **`declared_ceiling \ observed_effects` is the detector** —
