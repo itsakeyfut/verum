@@ -52,7 +52,13 @@ The `enforcement` field in the AI Context has to carry a value that makes the
 difference visible.
 
 ```json
-"mutates": { "enforcement": "upper_bound_checked" }
+"mutates": {
+  "enforcement": {
+    "level": "upper_bound_checked",
+    "scope": "handle_via_ctx",
+    "voided_by": ["domain_repr", "repository_impl", "service_body", "..."]
+  }
+}
 ```
 
 The spelling `type_checked` is not used, because it reads as "verified in both
@@ -112,7 +118,7 @@ The First PoC's generation scope is therefore the inside of `handle`, and **that
 scope is stated explicitly in the AI Context.**
 
 ```json
-"observed": { "fields": ["User::name"], "scope": "handle_only", "deferred": [] }
+"observed": { "fields": ["User::name"], "scope": "handle_only", "deferred": "unknown" }
 ```
 
 Without `scope`, an AI misreads the lower bound as covering every path. What is

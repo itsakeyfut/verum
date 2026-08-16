@@ -59,3 +59,12 @@ if [[ "$got_bad" -lt "$EXPECTED_BAD" ]]; then
 fi
 echo
 echo "残り $got_bad ブロック。python3 check.py --deps $DEPS --verbose で一覧。"
+
+# The JSON samples are a specification too, and until #38 nothing read them: the
+# AI Context schema is spelled out in six files that must agree key for key, and
+# the Rust harness above never looks at a ```json fence. On its first run this
+# check found two stale samples in `effect-inference.md` that the schema change
+# had missed. ADR-0008 §Confirmation lists what it enforces.
+echo
+echo "=== json ==="
+python3 check_json.py

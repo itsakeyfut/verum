@@ -1,4 +1,4 @@
-# #43 — does every Rust code block in `docs/` compile?
+# #43 / #38 — does every published code block and JSON sample hold up?
 
 `docs/` carries 211 fenced Rust blocks. Before this harness, **none of them was
 checked**: a block could contradict the prose beside it, reference a type that is
@@ -25,6 +25,7 @@ Measured on **rustc 1.85.0** (Verum's MSRV).
 | `split_mixed.py` | splits fences that carry a ✅ form and a ❌ form together |
 | `apply_tags.py` | writes the decided tags back into the documents |
 | `stub/` | the designed-but-unimplemented surface, **every item citing the document line it comes from** |
+| `check_json.py` | validates every ` ```json ` block against the one AI Context schema (#38 / ADR-0008) |
 
 Tags follow rustdoc, so GitHub renders the documents unchanged:
 
@@ -37,12 +38,14 @@ Tags follow rustdoc, so GitHub renders the documents unchanged:
 ## Current state
 
 ```
-215 blocks
+218 blocks
   compile_fail   54    every one verified to actually fail, every run
-  ignore        128    fragment / needs an M2 macro / needs an absent crate /
+  ignore        131    fragment / needs an M2 macro / needs an absent crate /
                        verum-internal / body elided / module without its imports
   ok             33
   remaining       0
+
+15 json samples, 11 ledger kinds, 0 violations
 ```
 
 Both directions are guarded, and both were demonstrated by breaking them:
@@ -53,6 +56,37 @@ Both directions are guarded, and both were demonstrated by breaking them:
 The second guard did not exist until it was tested for. `run.sh` checked only the
 first, so replacing a forgery example with `struct Trivial;` printed
 `compile_fail:BAD 1` and still exited 0.
+
+## The JSON half (#38)
+
+The AI Context schema is written out in **six files that must agree key for key**,
+and the Rust harness never looks at a ` ```json ` fence. `check_json.py` closes
+that: it parses every JSON sample under `docs/` — tolerating object fragments and
+`...` elisions — and enforces what ADR-0008 decided.
+
+The load-bearing rule is the **join**: `enforcement.voided_by` may only name a
+`kind` that the ledger actually emits, and the kind list is *parsed out of
+`unverified-boundaries.md`'s own sample* rather than hard-coded. Neither side can
+drift alone.
+
+The other load-bearing rule is that **a key claiming a guarantee carries an
+`enforcement` at all** — `fields` / `domains` / `emits` / `calls`. Checking the
+*shape* of an enforcement that is present misses the case where there is none,
+which is the case that actually happened, twice. The rule is ancestor-aware: a
+nested breakdown such as `mutates.conditional` inherits the enforcement on
+`mutates` and is not asked to repeat it.
+
+Every rule was broken on purpose and observed to exit 1 before being adopted —
+including the two that report *absence* (`no json fences found`, `no kind values
+found`), because a scan that finds nothing must not read as a pass, and including
+`run.sh` itself, to confirm the failure propagates rather than being swallowed.
+
+**It found three real defects that reading had not.** Two on its first run, both
+in `effect-inference.md` — a scalar `enforcement` and a `deferred: []`. The third
+in code review: the top-level `conditional[]` entry in `conditional-effects.md`
+had no `enforcement` while `ai-context.md`'s had one, so two samples of one
+schema disagreed inside the change that exists to stop exactly that. All three
+would have shipped.
 
 ## What it found
 

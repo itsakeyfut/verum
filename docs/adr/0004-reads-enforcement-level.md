@@ -20,8 +20,10 @@ Two statements in the specs are each defensible and cannot both be acted on:
   `docs/specs/mutation-contract.md` lists "2. Capability-checked getters" among
   what `#[derive(Domain)]` generates, and `docs/specs/read-contract.md` says
   Domain opacity plus those getters already restricts reading undeclared fields.
-* **`reads` is metadata only.** `docs/specs/read-contract.md:141` and
-  `docs/specs/ai-context.md:44` both emit `"enforcement": "metadata_only"`.
+* **`reads` is metadata only.** `docs/specs/read-contract.md` and
+  `docs/specs/ai-context.md` both emit `"level": "metadata_only"` for it
+  (`"enforcement": "metadata_only"` before ADR-0008 made `enforcement` an
+  object).
 
 If the getters really require a capability, `reads` is enforced as an upper
 bound and `metadata_only` **understates** what the type system does — the AI
@@ -72,9 +74,10 @@ the getters exist and that **whether they amount to enforcement of `reads` is
 
 What would confirm it is #15 itself: a spike that puts a `Has<Read<D, F>, I>`
 bound on a generated getter and measures whether reading an undeclared field
-fails to compile. Until that runs, `"enforcement": "metadata_only"` in the AI
-Context is the only mechanically checkable part, and
-`spikes/doc-code-blocks/run.sh` keeps the surrounding code blocks compiling.
+fails to compile. Until that runs, `"level": "metadata_only"` in the AI Context
+is the only mechanically checkable part, and `spikes/doc-code-blocks/run.sh`
+keeps the surrounding code blocks compiling — and, since ADR-0008, checks the
+`enforcement` object's shape in every published JSON sample.
 
 ### Consequences
 
