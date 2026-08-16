@@ -354,8 +354,10 @@ An AI is pulled toward the Axum idioms abundant in its training data —
 
 ### Test strategy (a complete blank)
 
-How a `Ctx<'req, E>` is constructed from a test. The sealed constructor is
-decided, but **the test API's design is undecided.**
+How a `Ctx<'req, E>` is constructed from a test. The constructor's *visibility*
+is decided and measured (`pub(crate)`, `E0624`); the **sealed token is still
+`proposed`** ([ADR-0006](../adr/0006-runtime-sealed-token.md)), and **the test
+API's design is undecided.**
 
 - An API with a fixed endpoint type, such as
   `verum::test::run::<UpdateUser>(req, mocks)`

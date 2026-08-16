@@ -297,6 +297,33 @@ attribute.
 > for trait-bound violations.** The attribute approach's advantage is the precision
 > of the errors catchable at layer 1 (the macro).
 
+### Rustc-native diagnostics Verum cannot reword
+
+Three so far. Each was parked in its own domain spec; they belong in one list,
+because the shared property is what matters — **`on_unimplemented` never runs**,
+so no wording Verum writes reaches the user.
+
+| Error | Where it fires | Recorded in |
+|---|---|---|
+| `E0615` / `E0609` | a field access on an opaque domain (T-M1-01 / #13) | [`persistence.md`](./persistence.md) |
+| `E0521` | a capability borrowed across `tokio::spawn` (T-M1-02 / #14) | [`capability-system.md`](./capability-system.md) |
+| `implementation of AsyncFnOnce is not general enough` | a higher-ranked `Ctx` in an `Fn`-trait position (T-M1-02 / #14) | [`capability-system.md`](./capability-system.md) |
+
+The third is the worst of them: it names no type the user wrote, and #14
+promoted it to a first-class footgun. `persistence.md` handles its case best —
+it names the trait-bound alternative that *would* let Verum own the wording, and
+that is the pattern to follow when adding a fourth row.
+
+### The spawn boundary is none of the three defence layers
+
+`tokio::spawn` carrying a capability out of the request is caught by **`E0521`,
+a rustc lifetime error** — not by the macro, not by an equality bound, not by a
+Verum trait bound. The layer table does not cover it, and reading the table as if
+it did is how the boundary gets described as "designed" when what holds it is
+`Ctx<'req, E>` not being `'static`. T-M1-02 measured the limit of that: **`+ Send`
+on a returned future is not a containment bound**, so a synchronous body can
+build and leak whatever it likes outside any `.await`.
+
 ### The alternative
 
 **The derive generates a dedicated trait per endpoint and embeds the declaration

@@ -241,7 +241,8 @@ accepted. What hyper *does* forbid is returning a future that borrows `&self`
 (B4a) — `Service::call(&self, ..)` offers nowhere to name that borrow. The
 `'static` in this design comes from `serve.rs`'s per-connection `tokio::spawn`,
 which is a choice, not a constraint. Note this is measured for **http1 only**;
-hyper's http2 builder additionally requires `S::Future: Send + 'static`.
+http2 additionally requires `S::Future: Send + 'static` — and that bound comes
+from `hyper_util`'s `TokioExecutor`, **not** from hyper's http2 builder.
 
 ### #39 — confirmed by execution
 
