@@ -92,12 +92,15 @@ What the derive generates:
 
 ```text
 1. Field marker types (ZSTs)         → mod user { pub struct Name; ... }
-2. Capability-checked getters        → read-contract.md (**whether that amounts to enforcing `reads`
-                                        is undecided** — ADR-0004 / #15)
+2. Capability-checked getters        → read-contract.md. #15 measured that they DO enforce, in an
+                                        extension trait, on two undesigned preconditions — the level
+                                        stays metadata_only (ADR-0004, still `proposed`)
 3. A pub(crate) Repr                 → the internal representation (⚠️ it does not end up
                                         "for the repository implementation only" — path 21)
-4. A Debug emitting declared fields only     → prevents secrets leaking into logs
-5. A Serialize emitting declared fields only → same
+4. A Debug emitting declared fields only     → prevents secrets leaking into logs. "Declared" here
+                                               means the DOMAIN's fields, which is all of them; only
+                                               a Projection narrows to the ENDPOINT's reads (#15, P4)
+5. A Serialize emitting declared fields only → same. Not measured — #15 covered Debug only
 ```
 
 ### Passing `&mut User` becomes safe

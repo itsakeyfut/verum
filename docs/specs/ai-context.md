@@ -160,6 +160,8 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
         "permanent": false },
       { "kind": "upsert_granularity", "detail": "creates plus deletes on one domain changes field values with no Mutate capability (path 19)",
         "permanent": false },
+      { "kind": "uncapped_read", "detail": "a Domain's Debug and free functions read fields outside the endpoint's reads; no getter shape reaches them, and a Projection narrows only its own Debug (path 23)",
+        "permanent": false },
       { "kind": "service_body", "detail": "the observed_effects scan covers only the inside of handle; effects in a service body do not appear in the lower bound (path 22)",
         "permanent": false },
       { "kind": "domain_repr", "detail": "a domain's Repr is reachable from anywhere in the same crate (path 21)",

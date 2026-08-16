@@ -1,0 +1,29 @@
+[package]
+name = "app"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fw.workspace = true
+verum.workspace = true
+
+# One feature per rejection probe, all off by default, so the default build is
+# the design as it would be written and every probe is named in run.sh's output.
+#
+# F1 is the exception: it is a feature-gated probe expected to **pass**, because
+# what it demonstrates is a hole. It is also F2's rule-14 control.
+[features]
+e1-inherent-impl-foreign-type = []
+e3-undeclared-read = []
+f1-forge-parameterised-trait = []
+f2-forge-associated-trait = []
+g2-repoint-readset = []
+d1-domain-getter-infer = []
+d2c-turbofish-undeclared = []
+v1-view-from-checked-getter = []
+p3b-projection-undeclared = []

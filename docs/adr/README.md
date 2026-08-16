@@ -21,7 +21,7 @@ Format: [MADR 4.0](https://adr.github.io/madr/). Copy
 | [0001](./0001-includes-is-implemented-on-the-endpoint.md) | Implement `Includes<D>` on the endpoint type, not on the domain set | accepted | UI fixture + satisfiability test in `crates/verum` |
 | [0002](./0002-ctxusers-exposes-the-endpoint-as-owner.md) | Expose the endpoint type as an `Owner` associated type | accepted | **nothing yet** — needs a `compile_fail` fixture in M3 |
 | [0003](./0003-doc-code-block-tags.md) | Declare whether a documentation code block is checked, using rustdoc fence tags | accepted | `spikes/doc-code-blocks/run.sh` |
-| [0004](./0004-reads-enforcement-level.md) | Whether capability-checked getters enforce `reads`, or `reads` stays metadata only | **proposed** | **nothing** — waits on #15 |
+| [0004](./0004-reads-enforcement-level.md) | Whether capability-checked getters enforce `reads`, or `reads` stays metadata only | proposed | `spikes/reads-getter-enforcement` — the getters enforce (`E0277`), but only in a derive-emitted extension trait and on two undesigned preconditions; the level stays `metadata_only` |
 | [0005](./0005-repo-handle-shape.md) | What `Repo<D, R, M>` is, and whether it carries the request lifetime | **proposed** | `spikes/ctx-lifetime-rpitit` E1–E4b — the escape is asserted at run time and **both** candidates block it; the decision waits on #39 |
 | [0006](./0006-runtime-sealed-token.md) | What `Runtime<Sealed>` is, and whether a sealed token closes the god-mode constructor | **proposed** | `spikes/ctx-lifetime-rpitit` A0 — visibility blocks *construction* only; a public erased-handler entry point still supplies a live `Ctx` |
 | [0007](./0007-field-trait-shape.md) | What `Field<D>` declares, and what forging it would buy | **proposed** | **nothing** — the seal has no trait to match |
@@ -31,8 +31,11 @@ Format: [MADR 4.0](https://adr.github.io/madr/). Copy
 
 > **Four `proposed` records, and the codebase relies on all four.** That is the
 > state [ADR-0000](./0000-record-architecture-decisions.md) calls a defect, made
-> visible rather than fixed. Each names the issue that settles it: #15, #39
-> (with #40), path 9, path 14.
+> visible rather than fixed. Each names the issue that settles it: #39 (with #40),
+> path 9, path 14. **0004 is measured but not settled** — #15 showed the mechanism
+> works and surfaced two preconditions nothing designs yet (the extension trait's
+> shape, and `Repo` being unreachable outside `Ctx`). An earlier revision moved it
+> to `accepted`; that verdict was withdrawn.
 >
 > **0005 and 0006 now have measurements** (T-M1-02 / #14) without having
 > decisions. That is the intended order — the spike measures, the issue decides —

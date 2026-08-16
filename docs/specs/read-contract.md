@@ -82,8 +82,11 @@ pub struct GetUserPublicProfile;
 > memory.
 >
 > Therefore:
-> - Do not derive `Debug` or `Serialize` on a `Projection` — the derive emits an
->   implementation printing declared fields only.
+> - Do not derive `Debug` or `Serialize` on a `Projection`. **The line that used
+>   to stand here — "the derive emits an implementation printing declared fields
+>   only" — is wrong.** A derive sees tokens, and `F` is a type parameter: at the
+>   point the impl is written nothing can enumerate the set. Measured as #15's P3.
+>   A `Projection`'s `Debug` can print the type name and no more.
 > - Forbid `Deserialize` on a domain, to prevent constructing one from arbitrary
 >   values.
 > - **Do not claim** mechanical backing for GDPR-style data minimisation until
@@ -152,27 +155,68 @@ projections) and the Full PoC is stated here deliberately.
 
 ## Treatment in the PoC
 
-**Projections are not implemented in the First PoC.**
+**Projections are not implemented in the First PoC — and #15 measured that they
+are *not* redundant either.**
 
-Reasons:
+> ### `reads` is enforced by the getter's bound — in one shape, conditionally
+>
+> T-M1-03 (`spikes/reads-getter-enforcement/`, 11 probes on rustc 1.85.0, two
+> crates, against `verum`'s real `Has`): `where Self::Set: Has<Read<D, F>, I>` on a
+> getter rejects an undeclared read with `E0277`. `find()` can keep returning the
+> plain opaque `Domain`. Decision in
+> [ADR-0004](../adr/0004-reads-enforcement-level.md), which stays `proposed`.
+>
+> **The getter lives in a derive-emitted extension trait, not on the repository.**
+> An inherent `impl Repo<Domain, ..>` is `E0116` in the real layering, where the
+> framework owns `Repo` and the user's crate owns the `Domain`. So
+> `user.email()` becomes `ctx.users().email(&user)`, which is symmetric with the
+> setters and consistent with [`handler-rules.md`](./handler-rules.md) Rule 2. The
+> Domain-side shape is `E0283`; naming `R` at the call site compiles and still
+> enforces, but it is not `user.email()`.
+>
+> **Two preconditions are undesigned, and both void the guarantee.** The trait must
+> not take `R` as a type parameter — written `UserRead<R>` a downstream crate
+> forges a wider read set in one line, and coherence does not object. And `Repo`
+> must be unreachable except through `Ctx`: the bound constrains `R`, not who
+> supplies it, so a public constructor lets the caller choose its own read set.
+> Both are measured; neither is closed.
+>
+> **Scope: `handle_via_ctx`, the same as `mutates`.** A `Domain`'s `Debug` and any
+> free function taking `&Domain` read every field with no capability, and no getter
+> shape reaches them
+> ([`unverified-boundaries.md`](./unverified-boundaries.md)).
+>
+> **What a projection still buys, measured:** its derived `Debug` prints the
+> declared fields and nothing else. The claim above — that a projection's derive
+> "emits an implementation printing declared fields only" — was briefly deleted
+> from this document as unachievable, on the grounds that a derive sees tokens and
+> `F` is a type parameter. That reasoning is wrong and P4 is the counter-example:
+> the derive emits one impl **per field of the Domain**, which it can see, and one
+> fixed recursive walk resolves `F` at monomorphisation. A `Domain`-side derive
+> cannot do this, because the `Domain` carries no read set. This is the one axis on
+> which projections are strictly stronger than getters.
+
+Reasons projections are still not built:
 
 - The First PoC proves one thing: that a GET cannot call a mutation.
-- Projections are faster to build symmetrically, once the mutation contract's
-  type design has settled.
-- Domain opacity alone — private fields plus capability-checked getters — may
-  already restrict **reading** an undeclared field. Whether checking `Reads` in a
-  getter's where clause achieves the same effect without a projection type needs
-  measuring.
+- Their remaining value is narrowing the `SELECT` clause — codegen, addressable on
+  its own — and narrowing a derived `Debug`/`Serialize` to the declared set, which
+  #15 measured and which nothing else in the design provides. Whether that is worth
+  the five costs above is #18's call.
 
 ### Do not hide the gap between stages
 
 The AI Context states that `reads` is metadata only for now.
 
-> **Whether capability-checked getters amount to enforcing `reads` has not been
-> measured.** That they are generated is settled; whether they turn reading an
-> undeclared field into a compile error is the subject of #15 / T-M1-03, which
-> has not run. Emitting `metadata_only` here is **choosing the weaker claim**, not
-> a finding that the getters have no effect. The account is in
+> **The getters do enforce — and the level still does not move.** #15 measured
+> that reading an undeclared field through a capability-checked getter is a compile
+> error. What has not happened is the *implementation*: `crates/verum` has no
+> derive, no `Repo` and no getters, so emitting `upper_bound_checked` would claim
+> enforcement no code provides. Nor are the two preconditions closed — an
+> unparameterised extension trait, and a `Repo` reachable only through `Ctx`. The
+> reason for `metadata_only` changed from "unmeasured" to "unimplemented, and two
+> preconditions open"; it promotes when M2's derive lands and both are closed, and
+> that promotion is a breaking change. Account in
 > [ADR-0004](../adr/0004-reads-enforcement-level.md).
 
 ```json

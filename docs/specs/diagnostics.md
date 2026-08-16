@@ -324,9 +324,30 @@ number.
 | Put anything expressible as an equality bound in that form | The only route that produces a note with a span |
 | Always attach `on_unimplemented` to a trait with type parameters | Do not expose raw trait-resolution errors |
 | Always attach `do_not_recommend` to a recursive impl | Suppresses exposure of the cons list and the index types |
-| A help always shows both directions (widen the contract / fix the implementation) | With only one, an AI relaxes the contract mechanically |
+| A **help or note** always shows both directions (widen the contract / fix the implementation) | With only one, an AI relaxes the contract mechanically. **`help` is unreachable from layer 3** — see below — so the rule is satisfied by whichever of the two rustc will emit |
 | The where clause goes on the method | On the impl, `on_unimplemented` is ignored |
 | One error, one cause | Avoids the tuple-type expansion cascading into several errors |
+
+### `help` cannot be emitted from layer 3 at all
+
+Measured on 1.85.0 (#15). `#[diagnostic::on_unimplemented]` rejects a `help` key:
+
+```text
+warning: malformed `on_unimplemented` attribute
+  |     help = "widen the contract, or remove the call"
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid option found here
+  = help: only `message`, `note` and `label` are allowed as options
+```
+
+So for **every trait-bound error**, the `help:` line belongs to rustc — usually
+`the trait ... is not implemented for ...` — and anything Verum writes lands in a
+`note:`. The rule above is worded for that. An earlier draft of this document,
+and T-M4-05's completion criterion, both required a two-directional *`help`*,
+which no layer-3 diagnostic can satisfy; both are corrected rather than left as
+a criterion nothing can meet.
+
+Layers 1 and 2 are unaffected — a macro emits whatever it likes, and an equality
+bound produces a note with a span.
 
 ### The limit of "a help shows both directions"
 

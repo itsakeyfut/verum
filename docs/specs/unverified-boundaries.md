@@ -328,6 +328,31 @@ and a handler driven with `'req = 'static` — no `Ctx` construction required. T
 sealed-token design is [ADR-0006](../adr/0006-runtime-sealed-token.md), still
 `proposed`, and visibility alone was measured to leak.
 
+#### path 23 — `reads` is enforced with `mutates`' scope, not more (compile-verified)
+
+#15 measured that a capability-checked getter rejects an undeclared read
+(`E0277`). It also measured what never goes through a getter:
+
+| Probe | Route | Result |
+|---|---|---|
+| P1 | `Debug` on the domain | prints every field, no capability |
+| P2 | a free function taking `&Domain` | reads whatever it likes |
+| P3 | a `Projection<D, F>`'s `Debug` | the same — `F` is a type parameter, so no derive can enumerate it |
+
+**This is not an argument against the getters.** It is the boundary of what
+"enforced" means for `reads`, and it is the boundary `mutates` already has:
+`handle_via_ctx`. Recorded so `reads` is not read as narrower or broader than it
+is once its level promotes.
+
+**Path 4 does not cover this.** Path 4 is a `Debug` leaking fields the *Domain*
+does not declare, and its remedy is a derive emitting the Domain's declared
+fields. Every one of those is still outside the *endpoint's* `reads`. The two
+paths share a mechanism and differ in which declaration they are measured
+against.
+
+Reproduce: `spikes/reads-getter-enforcement/` (`bash run.sh`). Decision in
+[ADR-0004](../adr/0004-reads-enforcement-level.md).
+
 ### Cause 3: effects that happen outside the contract
 
 | # | Route | Response | State |
@@ -338,6 +363,7 @@ sealed-token design is [ADR-0006](../adr/0006-runtime-sealed-token.md), still
 | 18 | Side effects inside a free-function constructor (`AuditLog::user_updated()` and the like) — `kind: constructor_body` | Generate the constructors and remove the room for hand-writing | **Deferred (stated)** |
 | 19 | Bypassing field granularity with `creates` + `deletes` (an upsert) — `kind: upsert_granularity` | The derive rejects declaring both for one domain / `create` takes new IDs only | **Deferred (stated)** |
 | 20 | `Condition::holds` unlocks everything by returning `true` | **Impossible in principle** | **Permanently stated** |
+| 23 | **`Debug` / `Serialize` / a free function reads a field the endpoint did not declare in `reads`** — `kind: uncapped_read` | Capability-check the getters (measured to work) and accept that these routes are outside them. A `Projection`'s **own** derived `Debug` does narrow to the declared set (#15, P4), but the `Domain` value still exists and its `Debug` and any free function taking `&Domain` reach every field | **Stated** (measured, #15) |
 | 22 | **The `observed_effects` scan does not reach a service body** (a consequence of the Q-A decision to scan `handle` only) | Annotate every effect-carrying item and take the transitive closure at build time (a future form). For now, state it with `scope: "handle_only"` and `deferred` | **Stated** (Q-A / 2026-08-15) |
 
 ---
@@ -488,6 +514,11 @@ An unchecked boundary is **always** emitted in the AI Context.
         "permanent": false
       },
       {
+        "kind": "uncapped_read",
+        "detail": "a Domain's Debug and free functions taking &Domain read fields the endpoint did not declare in reads; no getter shape reaches them, and a Projection narrows only its own Debug (path 23)",
+        "permanent": false
+      },
+      {
         "kind": "service_body",
         "detail": "the observed_effects scan covers only the inside of handle; effects in a service body do not appear in the lower bound (path 22)",
         "permanent": false
@@ -523,8 +554,8 @@ Widening the contract reduces the entries in `unverified_boundaries`. That count
 is the progress metric.
 
 ```text
-First PoC:  3 permanent + 8 non-permanent
-Full PoC:   3 permanent + 5 non-permanent (middleware and events handled)
+First PoC:  3 permanent + 9 non-permanent
+Full PoC:   3 permanent + 6 non-permanent (middleware and events handled)
 Later:      3 permanent + 0 non-permanent
 ```
 
@@ -536,9 +567,10 @@ what has been found, so a *rising* count is a review working, not a regression.
 > differs every time it is counted"): count **one-to-one with the entries emitted
 > in the AI Context's `unverified_boundaries.entries`.** permanent 3 =
 > `condition_body` (20) / `row_scope` (row-level permissions) / `domain_swap` (2).
-> non-permanent 8 = `middleware` (16) / `event_subscriber` (15) /
+> non-permanent 9 = `middleware` (16) / `event_subscriber` (15) /
 > `repository_impl` (17) / `constructor_body` (18) / `upsert_granularity` (19) /
-> `domain_repr` (21) / `malformed_set` (14f) / `service_body` (22).
+> `domain_repr` (21) / `malformed_set` (14f) / `service_body` (22) /
+> `uncapped_read` (23).
 >
 > **Paths 18 and 19 were previously uncounted** because neither had a `kind` name
 > decided, and this definition excluded 19 while counting 18 — so what the
@@ -546,7 +578,7 @@ what has been found, so a *rising* count is a review working, not a regression.
 > named and emitted, which #38 forced: `enforcement.voided_by` may only name a
 > `kind` that exists, and both paths void `mutates`.
 >
-> These eleven entries must **agree as a set** with both this file's sample and
+> These twelve entries must **agree as a set** with both this file's sample and
 > [`ai-context.md`](./ai-context.md)'s. Three places holding different values is
 > why this note was rewritten; `spikes/doc-code-blocks/check_json.py` now makes
 > the agreement mechanical rather than a promise.
