@@ -234,3 +234,24 @@ pub mod child {
         u.0.email = "attacker@example.com".to_owned();
     }
 }
+
+/// P22 / P23 — the constructor gated by a **token value**.
+///
+/// `pub` rather than `pub(crate)` on purpose: the premise of a token gate is that
+/// the token, not the visibility, is what protects the constructor. If it still
+/// needed `pub(crate)` to be safe, the token would be doing nothing.
+#[cfg(any(feature = "p22-token-missing", feature = "p23-token-stolen"))]
+impl User {
+    pub fn from_repr_tokened(r: UserRepr, _t: fw::RepoToken) -> Self {
+        Self(r)
+    }
+}
+
+/// P24 / P25 — the constructor gated by a **trait bound**, the only shape whose
+/// rejection would be `E0277` and could therefore carry Verum's own wording.
+#[cfg(any(feature = "p24-proof-forged", feature = "p37-proof-wording"))]
+impl User {
+    pub fn from_repr_proved<P: fw::RepositoryProof>(r: UserRepr, _p: P) -> Self {
+        Self(r)
+    }
+}

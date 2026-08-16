@@ -178,7 +178,7 @@ so an `impl` or helper written beside it sits on the permissive side. The
 shortest way around an `E0616` for an AI is to move the code into the domain's
 own file.
 
-**Undecided (#18)**: a **derive cannot add an item named after its input**
+**Undecided (#34)**: a **derive cannot add an item named after its input**
 (`E0428`), so `pub struct User(UserRepr)` cannot come from a derive. But the
 signature `as_repr(&self) -> &Repr` **has several shapes a derive can satisfy**,
 so abandoning the derive is not necessarily required. Who attaches

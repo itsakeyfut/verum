@@ -302,11 +302,12 @@ Repository implementation → trust boundary (subject to review and audit)
 DB                        → out of scope
 ```
 
-> **⚠️ The first line above does not hold today** (measured in T-M1-01 / #13).
-> While ledger **path 21** is open, ordinary code in the endpoint or service layer
-> can forge a domain with `User::from_repr(UserRepr { .. })` — no capability, no
-> repository, no SQL, no `unsafe`. The diagram describes the state after path 21
-> is closed. Detail in [`persistence.md`](./persistence.md) §Verdict.
+> **⚠️ The first line above did not hold as originally measured** (T-M1-01 / #13),
+> and now holds conditionally (#33 / ADR-0010). With the `Repr`, the constructor and
+> the repository emitted into a **derive-owned private module**, endpoint and service
+> code can no longer forge a domain (`E0624`, P31) — but only while the conversion
+> stays an *inherent* method; on a public trait ledger **path 21** reopens from every
+> crate (P36). Detail in [`persistence.md`](./persistence.md) §Verdict.
 
 Means of narrowing the boundary are in [`persistence.md`](./persistence.md).
 Every unchecked boundary is listed in

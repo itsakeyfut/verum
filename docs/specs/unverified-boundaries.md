@@ -37,7 +37,7 @@ Closing routes individually is whack-a-mole. The causes reduce to three.
 
 | Cause | Routes | The structural response |
 |---|---|---|
-| **1. The domain model is exposed as an ordinary Rust struct** | Direct assignment / `into_owned` / a `Debug` leak / interior mutability / **construction and reading through `Repr` (path 21)** | Make the domain opaque, reachable only through capability-checked accessors. **But opacity alone is not enough** — the `Repr` generated for persistence opens a route alongside it (path 21). How it is closed is #18 |
+| **1. The domain model is exposed as an ordinary Rust struct** | Direct assignment / `into_owned` / a `Debug` leak / interior mutability / **construction and reading through `Repr` (path 21)** | Make the domain opaque, reachable only through capability-checked accessors. **But opacity alone is not enough** — the `Repr` generated for persistence opens a route alongside it (path 21). How it is narrowed is #33 / ADR-0010 |
 | **2. Nothing constrains the lifetime or route of a type that can carry a capability** | spawn / the test god-mode / a `when` leak / `dyn Repository` / a `PgPool` on the endpoint | Bind it to the request lifetime with `Ctx<'req, E>` and seal the construction route |
 | **3. Effects happen where no contract is required** | The far side of `emits` / middleware / a repository implementation / free-function constructors / `Condition::holds` | Increase the places that require a contract (in stages) |
 
@@ -51,10 +51,10 @@ Closing routes individually is whack-a-mole. The causes reduce to three.
 |---|---|---|---|
 | 1 | `user.email = v`, direct assignment | Domain opacity (private fields) | **Closed in the First PoC** |
 | 2 | `*user = other_user` (fetch two with `find` and swap) | Restricting the construction route does not close it | **Stated** (below) |
-| 3 | Escaping a projection with `into_owned()` | **Not provided** | **Closed in the First PoC.** ⚠️ But deriving `Clone` on `Repr` brings it back (see path 21) |
-| 4 | A data leak through `Debug` / `Serialize` | A custom implementation emitting declared fields only, derive-generated | **Closed in the First PoC.** ⚠️ The response is **imposed only on the domain side** — deriving `Debug` on `Repr` leaks from within the same crate (see path 21) |
+| 3 | Escaping a projection with `into_owned()` | **Not provided** | **Closed in the First PoC.** ⚠️ Deriving `Clone` on `Repr` brings it back (see path 21) — **confined to the domain's own module** once the `Repr` carries no visibility modifier either (P30, ADR-0010) |
+| 4 | A data leak through `Debug` / `Serialize` | A custom implementation emitting declared fields only, derive-generated | **Closed in the First PoC.** ⚠️ The response is **imposed only on the domain side** — deriving `Debug` on `Repr` leaks from within the same crate (see path 21). **Confined to the domain's own module** once the `Repr` carries no visibility modifier: the name is unreachable, so there is no `Debug` to call (P30, ADR-0010) |
 | 5 | Mutation through interior mutability (`RefCell` / `Mutex` / `Cell`) | Restrict domain field types (a whitelist until `Freeze` stabilises) | **Closed in the First PoC** |
-| 21 | **`User::from_repr(UserRepr { .. })` / `as_repr()` reachable from anywhere in the domain's crate** | Undecided (settled in #17 / #18) | ⚠️ **Open** (measured in T-M1-01 / #13; below) |
+| 21 | **`User::from_repr(UserRepr { .. })` / `as_repr()` reachable from anywhere in the domain's crate** | The derive emits the `Repr`, the constructor **and** the repository into a **derive-owned private module** and re-exports the domain from it (#33 / [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | **Closed** for all user-written code — handler, service, a helper beside the user's own declaration, the crate-root layout, the read half, and foreign crates are all `E0624` (P31/P32/P34/P35/P27). ⚠️ **Conditional**: closed only while the conversion stays an *inherent* method — on a public trait it reopens completely (P36). Measured in T-M1-01 / #13 and #33; below |
 
 > **Numbers are only ever appended, never renumbered.** Paths 12 / 13 / 14 are
 > referenced from [`../rules/api-surface.md`](../rules/api-surface.md),
@@ -62,18 +62,53 @@ Closing routes individually is whack-a-mole. The causes reduce to three.
 > renumbering would silently break every cross-reference. Stability of the numbers
 > takes priority over grouping by cause.
 
-#### path 21 — `Repr` cannot be confined to "the repository implementation only" (compile-verified)
+#### path 21 — `Repr` cannot be confined to "the repository implementation" as written, but can be confined to the domain's module (compile-verified)
 
 `#[derive(Domain)]` **expands in the user's crate**, so the visibility of the
 generated `pub(crate) struct UserRepr` and `pub(crate) fn from_repr` / `as_repr`
 is **the whole application crate.** The derive cannot emit `pub(in ...)` because it
-does not know which module the repository is written in. That leaves two readings,
-and **neither works.**
+does not know which module the repository is written in. That leaves two readings
+of "the repository implementation", and **neither works** — plus a third that does,
+found in #33 by dropping the assumption that the repository is written by the user
+at all.
 
 | Where the repository lives | Measured |
 |---|---|
 | The same crate as the domain (a single-crate application) | Any handler in the crate can write `User::from_repr(UserRepr { email: anything, .. })`. No capability, no repository, no SQL, no `unsafe` |
 | A separate crate | `Repr` is entirely invisible (`E0603`). The design does not function |
+| Generated into **the domain's own module** | **Not enough** (#33). Handlers are rejected (`E0624`, P26), but a helper beside the user's own `struct User` forges (P29), and if the domain sits at the **crate root** the module *is* the crate, so nothing is confined at all (P33) |
+| **Generated into a derive-owned private module** (#33, [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | **The one that holds.** The radius is chosen by the derive, not by the user's layout: P31, P32, P34, P35 and P27 are all `E0624`, while the generated repository inside still loads a real row (P28) |
+
+**The `pub(in ...)` sentence above is true and does not imply what it was used to
+imply.** The derive does not need `pub(in ...)`; it needs *no modifier*, plus a
+legitimate caller inside the resulting scope — which is why generating the
+repository is load-bearing. **Generating it is not sufficient on its own**: probe
+P2 forges from a handler while `app/src/repo.rs` sits in the same crate. It is the
+placement that closes the path, not the generation.
+
+**What the confinement's radius must be, measured.** Confining to *the user's*
+module leaves two holes: a helper beside the user's own declaration forges (P29),
+and at the **crate root** "no modifier" is `pub(crate)`, so the mechanism is vacuous
+(P33). Both close when the derive owns the module (P31, P32). The lesson is
+RK-016's — a guard must not depend on placement — applied to a type-level mechanism.
+
+**What keeps path 21 in the ledger.** The closure is **conditional on the conversion
+staying an inherent method**. A trait method's visibility is the trait's, so moving
+the conversion onto a public framework trait — the obvious shape for a generic
+`Repo<D: DomainRepr>` — reopens it from every crate (P36, `Finished`). Path 21 keeps
+its AI Context entry for that reason, and because ARK-002 is **not** satisfied: the
+`E0624` carries no pointer to the generated repository, and `rustc --explain E0624`
+names both bypasses by number.
+
+**No trait-bound gate can replace this, and the reason generalises.** A gate whose
+guard is a trait needs the trait sealed, and a seal cannot be satisfied by code the
+derive expands **inside the user's crate** — whatever the expansion writes, a
+hand-written impl writes too. Measured against both candidates: a token passed by
+value is stolen through the user's own `impl Repository` (P23), and an
+`impl RepositoryProof for MyProof {}` is a foreign trait on a local type, allowed
+from the application crate (P24) and from any other crate (P25). Consequence for
+diagnostics: the rejection here is a **visibility error and cannot be reworded**,
+the same constraint already recorded for `E0615` / `E0609` below.
 
 **The comparison with path 2 splits by axis. It is not strictly worse.**
 
@@ -512,7 +547,7 @@ An unchecked boundary is **always** emitted in the AI Context.
       },
       {
         "kind": "domain_repr",
-        "detail": "a domain's Repr is reachable from anywhere in the same crate; it can be constructed and every field read without a capability (path 21)",
+        "detail": "a domain's Repr and constructor are confined to a derive-owned private module (ADR-0010); no user-written code can build one or read a field without a capability. This holds ONLY while the conversion is an inherent method \u2014 on a public trait it is reachable from every crate (path 21)",
         "location": "src/domain/user.rs",
         "permanent": false
       },
