@@ -307,7 +307,7 @@ so no wording Verum writes reaches the user.
 |---|---|---|
 | `E0615` / `E0609` | a field access on an opaque domain (T-M1-01 / #13) | [`persistence.md`](./persistence.md) |
 | `E0521` | a capability borrowed across `tokio::spawn` (T-M1-02 / #14) | [`capability-system.md`](./capability-system.md) |
-| `implementation of AsyncFnOnce is not general enough` | a higher-ranked `Ctx` in an `Fn`-trait position (T-M1-02 / #14) | [`capability-system.md`](./capability-system.md) |
+| `implementation of AsyncFnOnce is not general enough` | a higher-ranked `Ctx` in an `Fn`-trait position (T-M1-02 / #14) | [`conditional-effects.md`](./conditional-effects.md) |
 
 The third is the worst of them: it names no type the user wrote, and #14
 promoted it to a first-class footgun. `persistence.md` handles its case best —
