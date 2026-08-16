@@ -56,9 +56,15 @@ first, so replacing a forgery example with `struct Trivial;` printed
 
 ## What it found
 
-- **`Repo`, `Runtime`, `Field` and `When` are used but declared nowhere** in
-  `docs/`. Seven or more blocks depend on them. Found while writing the stub —
-  there was nothing to copy.
+- **`Repo`, `Runtime` and `Field` are used but declared nowhere** in `docs/`.
+  Seven or more blocks depend on them. Found while writing the stub — there was
+  nothing to copy. Each now has a `proposed` ADR.
+- **`When` was wrongly listed with them.** It *is* declared, in
+  `rust-type-model.md:73` and `type-level.md:324`, and the two agree. The stub
+  lacked it, so the harness failed, and the failure was written down as a
+  documentation defect. **A red run means "the docs are wrong" *or* "the stub is
+  behind", and this one was the latter** — exactly the ambiguity the ADR warns
+  about, walked into by the person who wrote the warning.
 - **`Handler` does not compile as printed** (`rust-type-model.md:327`,
   `rules/rust.md:76`): it names `Self::Request` with no supertrait that declares
   it. `type-level.md:412` has the same shape for `Self::R`.

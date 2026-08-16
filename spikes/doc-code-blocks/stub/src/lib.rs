@@ -97,10 +97,15 @@ pub trait Field<D> {
     type Ty;
 }
 
-/// `docs/specs/conditional-effects.md:76` writes
-/// `When<EmailChanged, CondMutates, CondEmits, CondCalls>`. Its parameter list
-/// is described in prose at `:107-115` and never written as a declaration —
-/// UNDECLARED, a #43 finding.
+/// Transcribed from `docs/specs/rust-type-model.md:73`, which `docs/rules/type-level.md:324`
+/// repeats identically:
+///
+/// ```text
+/// pub struct When<C, CondMutates, CondEmits, CondCalls>(PhantomData<(C, CondMutates, CondEmits, CondCalls)>);
+/// ```
+///
+/// Defaults are added here so partially-applied uses in the docs resolve; the
+/// declaration itself carries none.
 pub struct When<C, M = (), E = (), Ca = ()>(PhantomData<fn() -> (C, M, E, Ca)>);
 
 /// `docs/rules/rust.md:112` uses `Method` as a field type on `RouteKey`, and
