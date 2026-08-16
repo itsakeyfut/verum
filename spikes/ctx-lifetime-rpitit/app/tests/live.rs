@@ -72,6 +72,14 @@ delegating_endpoint!(LeakEndpoint => |ctx, req| async move {
     Ok("returned-before-the-task-ran".to_owned())
 });
 
+// D5e — the sync-body leak. Note the body is NOT `async move`: the leak runs in
+// the handler's synchronous prelude, and only its result crosses into the
+// `+ Send` future. That is the whole point.
+delegating_endpoint!(SyncBodyLeakEndpoint => |ctx, req| {
+    let out = app::d5e_syncbody_leak(ctx, req);
+    async move { out }
+});
+
 // F2 / F3 — #40's candidate, and the cost of it.
 delegating_endpoint!(JobEndpoint => |ctx, req| async move {
     app::f2_owned_jobctx(ctx, req.id);
@@ -179,8 +187,40 @@ async fn f2_owned_jobctx_mutates_from_the_child_task() {
     let out = serve_one(router, rt.clone(), "/job", "23:ignored@example.com").await;
     assert_eq!(out, "spawned");
 
+    assert_eq!(
+        rt.peek(23).unwrap().email(),
+        "before@example.com",
+        "the child task must not have run yet, or this test proves nothing about \
+         *when* the owned JobCtx mutates"
+    );
+
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert_eq!(rt.peek(23).unwrap().email(), "job@example.com");
+}
+
+/// D5e — the `when` scope's `Ctx` is used **after the scope returned**, from a
+/// handler whose returned future is `+ Send`.
+///
+/// This is the probe #14 concluded could not exist. The sentinel is written only
+/// by the escaped handle: the `when` body captures and writes nothing, so a pass
+/// here cannot come from the condition having done the work. RK-017.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn d5e_escaped_ctx_mutates_after_the_when_scope_returned() {
+    let rt = Runtime::new();
+    rt.seed(Domain::new(31, "before@example.com"));
+
+    let router = Router::new().route("/syncleak", SyncBodyLeakEndpoint);
+    let out = serve_one(router, rt.clone(), "/syncleak", "31:ignored@example.com").await;
+
+    assert_eq!(
+        out, "leaked-after-scope@example.com",
+        "the handler returned a value written through the escaped Ctx"
+    );
+    assert_eq!(
+        rt.peek(31).unwrap().email(),
+        "leaked-after-scope@example.com",
+        "`+ Send` did not contain the scope: the Ctx was used after `when` returned"
+    );
 }
 
 /// E1 — the leaked capability handle mutates **after the request returned**.

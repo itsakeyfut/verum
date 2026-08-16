@@ -129,6 +129,42 @@ impl<'req, E: Endpoint> Ctx<'req, E> {
         f(Ctx::new(self.rt), user, req).await
     }
 
+    /// Row 2 of the four-form table — the elision written out as **three
+    /// separate binders**, which is the faithful expansion.
+    ///
+    /// Expected to behave exactly like `when`. It exists because the table in
+    /// `docs/specs/conditional-effects.md` publishes four rows as "measured" and
+    /// only rows 1 and 4 had a method behind them; a regression in this row was
+    /// invisible to the harness (#48). Covered by the baseline rather than by a
+    /// probe row — see the README on why a `pass` row asserting `Finished`
+    /// asserts nothing.
+    pub async fn when_abc<C, F>(&self, user: &mut Domain, req: &Req, f: F) -> Result<()>
+    where
+        C: Condition,
+        F: for<'a, 'b, 'c> AsyncFnOnce(Ctx<'a, E>, &'b mut Domain, &'c Req) -> Result<()>,
+    {
+        if !C::holds(user, req) {
+            return Ok(());
+        }
+        f(Ctx::new(self.rt), user, req).await
+    }
+
+    /// Row 3 of the four-form table — **two** of the three lifetimes shared.
+    ///
+    /// The interesting row: it shows the rule is "any shared lifetime", not
+    /// "collapsed into one binder". `when_bound` (row 4) shares all three and is
+    /// the form an implementer reaches for first, but this one already fails.
+    pub async fn when_ab<C, F>(&self, user: &mut Domain, req: &Req, f: F) -> Result<()>
+    where
+        C: Condition,
+        F: for<'a, 'b> AsyncFnOnce(Ctx<'a, E>, &'b mut Domain, &'b Req) -> Result<()>,
+    {
+        if !C::holds(user, req) {
+            return Ok(());
+        }
+        f(Ctx::new(self.rt), user, req).await
+    }
+
     /// D1d — candidate: `FnOnce` returning a **boxed** `Send` future, with
     /// `user` and `req` still lent as parameters.
     ///

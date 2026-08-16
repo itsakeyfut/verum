@@ -400,6 +400,66 @@ pub fn d1_when_lends<E: Endpoint>(
     }
 }
 
+/// Row 2 — the elision written out as three separate binders.
+///
+/// Expected to **compile**, like `d1_when_lends`. In the default build, so the
+/// baseline covers it: a `pass` probe row whose needle is `Finished` asserts
+/// nothing the exit code did not (measured in #14's review), whereas a baseline
+/// failure is `FATAL`.
+pub fn d1r2_three_binders<E: Endpoint>(
+    ctx: Ctx<'_, E>,
+    req: Req,
+) -> impl Future<Output = Result<String>> + Send {
+    async move {
+        let mut user = ctx.users().find(req.id)?;
+        ctx.when_abc::<EmailChanged, _>(&mut user, &req, async |c, u, r| {
+            c.users().set_email(u, r.email.clone())?;
+            Ok(())
+        })
+        .await?;
+        Ok(user.email().to_owned())
+    }
+}
+
+/// D1b's control (`docs/rules/test.md` §9-14) — the collapsed `for<'a>` form
+/// with `+ Send` **removed and nothing else changed**.
+///
+/// Expected to **compile**. D1b names `+ Send` as the cause of its rejection in
+/// five documents; without this, that attribution was unmeasured. Baseline, for
+/// the same reason as `d1r2_three_binders`.
+pub fn d1b_nosend<E: Endpoint>(ctx: Ctx<'_, E>, req: Req) -> impl Future<Output = Result<String>> {
+    async move {
+        let mut user = ctx.users().find(req.id)?;
+        ctx.when_bound::<EmailChanged, _>(&mut user, &req, async |c, u, r| {
+            c.users().set_email(u, r.email.clone())?;
+            Ok(())
+        })
+        .await?;
+        Ok(user.email().to_owned())
+    }
+}
+
+/// Row 3 — **two** of the three lifetimes shared.
+///
+/// Expected to **fail** with `not general enough`. Shows the rule is "any shared
+/// lifetime", not "collapsed into a single binder": this form still names three
+/// binders' worth of structure and is already rejected.
+#[cfg(feature = "d1r3-two-shared")]
+pub fn d1r3_two_shared<E: Endpoint>(
+    ctx: Ctx<'_, E>,
+    req: Req,
+) -> impl Future<Output = Result<String>> + Send {
+    async move {
+        let mut user = ctx.users().find(req.id)?;
+        ctx.when_ab::<EmailChanged, _>(&mut user, &req, async |c, u, r| {
+            c.users().set_email(u, r.email.clone())?;
+            Ok(())
+        })
+        .await?;
+        Ok(user.email().to_owned())
+    }
+}
+
 /// D1-bound — the same call against `when_bound`, whose signature binds the
 /// three elided lifetimes into one `for<'a>`.
 ///
@@ -555,7 +615,7 @@ pub fn d5b_when_named_leak<'req, E: Endpoint>(
 /// else. Expected to **compile** — the leaking body itself is well-typed.
 ///
 /// What it does *not* show is that the leak is reachable; that is D5d.
-#[cfg(any(feature = "d5c-when-named-leak-nosend", feature = "d5d-nosend-leak-from-handler"))]
+#[cfg(feature = "d5c-when-named-leak-nosend")]
 pub fn d5c_when_named_leak_nosend<'req, E: Endpoint>(
     ctx: Ctx<'req, E>,
     req: Req,
@@ -572,6 +632,16 @@ pub fn d5c_when_named_leak_nosend<'req, E: Endpoint>(
         Ok(user.email().to_owned())
     }
 }
+
+// §9-13 for a feature-gated pass probe. `impl Future` cannot be named, so the
+// usual `const _: fn(..) -> ..` is unavailable — but *existence* can still be
+// pinned without naming the return type. This is gated on the same feature as
+// the function, so re-pointing one and not the other stops compiling, which is
+// the mutation that otherwise left D5c green with nothing compiled (#48 M4).
+#[cfg(feature = "d5c-when-named-leak-nosend")]
+const _: () = {
+    let _ = d5c_when_named_leak_nosend::<UpdateUser>;
+};
 
 /// D5d — D5c **awaited** from a `+ Send` position.
 ///
@@ -590,6 +660,64 @@ pub fn d5d_nosend_leak_from_handler<E: Endpoint>(
 ) -> impl Future<Output = Result<String>> + Send {
     async move { d5c_when_named_leak_nosend(ctx, req).await }
 }
+
+/// D5e — **the refutation, made standing.** `+ Send` does not close ledger path 8.
+///
+/// `Handler::handle` is `fn .. -> impl Future<..> + Send`, **not `async fn`**
+/// (`fw/src/erase.rs`), so the bound reaches only what the *returned future*
+/// holds across awaits. A handler body is synchronous and already holds
+/// `Ctx<'req, Self>` with `'req` named — D5c's precondition — so it can drive
+/// the leaking future to completion **before it ever builds the future it
+/// returns**. `.await` is the only thing that propagates the obligation.
+///
+/// #14 concluded the opposite and wrote it into four canon documents and an
+/// ADR; Tier-2 review refuted it by building this. Expected to **compile and
+/// run**, and `tests/live.rs` asserts the store actually moves. RK-017.
+///
+/// The `Ctx` handed back by `when_named` is used **after the scope returned**,
+/// and the value it writes is a sentinel no other path writes, so the assertion
+/// cannot be satisfied by the condition body having done the work.
+pub fn d5e_syncbody_leak<'req, E: Endpoint>(ctx: Ctx<'req, E>, req: Req) -> Result<String> {
+    poll_to_completion(async move {
+        let mut escaped: Option<Ctx<'req, E>> = None;
+        ctx.when_named::<EmailChanged, _>(&req, async |c, _r| {
+            // Capture only. Nothing is written inside the scope.
+            escaped = Some(c);
+            Ok(())
+        })
+        .await?;
+        let leaked = escaped.ok_or_else(|| Error("condition did not hold".into()))?;
+        let mut user = leaked.users().find(req.id)?;
+        leaked
+            .users()
+            .set_email(&mut user, "leaked-after-scope@example.com".to_owned())?;
+        Ok(user.email().to_owned())
+    })
+}
+
+/// Drives a future to completion on the current thread, with no executor.
+///
+/// Safe — `Box::pin`, not `Pin::new_unchecked` (`docs/rules/unsafe.md`: there
+/// should be none). **Bounded**: the store is in memory and nothing here awaits
+/// anything real, so a pend means the probe has drifted from what it claims to
+/// measure, and it should say so rather than spin.
+fn poll_to_completion<F: Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll};
+
+    let mut fut = Box::pin(fut);
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    for _ in 0..64 {
+        if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+            return v;
+        }
+    }
+    panic!("d5e: the leak body pended — nothing in this spike should await anything real");
+}
+
+// §9-13 at the call site. Unlike every other `when` probe, D5e's return type is
+// nameable (`Result<String>`, not `impl Future`), so the type-level pin that
+// §9-13 asks for is actually available here.
+const _: for<'a> fn(Ctx<'a, UpdateUser>, Req) -> Result<String> = d5e_syncbody_leak::<UpdateUser>;
 
 /// E1 — the capability handle in the shape `capability-system.md:190`
 /// specifies. No lifetime parameter, so it owns its access and is `'static`.
@@ -680,6 +808,11 @@ pub fn f2_owned_jobctx<E: Endpoint>(
     id: u64,
 ) -> tokio::task::JoinHandle<Result<()>> {
     ctx.spawn_owned::<SendEmailJob, _, _>(move |jctx| async move {
+        // The sleep mirrors `e1_handle_escapes`, and for the same reason: without
+        // it the job finishes before the HTTP round-trip does, so `tests/live.rs`
+        // cannot tell "the child task mutated" from "the handler mutated inline".
+        // The test's name claims the former; #48 found it was asserting neither.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         jctx.set_email(id, "job@example.com".to_owned())
     })
 }

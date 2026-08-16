@@ -27,10 +27,20 @@
 #         cold build, so it makes the score depend on cache state.
 #   §9-5  The baseline runs after a recursive `touch`, so a cached diagnostic
 #         cannot replay as a pass.
+#   §9-4  `[lints.rust] unexpected_cfgs = "deny"` is set per package, so a
+#         misspelled feature name in a `#[cfg]` is an error rather than a probe
+#         that silently compiles nothing.
+#   §9-7  The baseline's cache invalidation recurses, so a new subdirectory
+#         cannot disarm it.
 #   §9-11 The baseline covers *both* crates that host probes.
 #   §9-12 The toolchain is asserted, not printed. C1's message seeds an M3 UI
 #         test and `docs/rules/test.md` §1.4 judges `.stderr` on 1.85.0; a text
 #         captured on 1.97.1 would be the wrong specification.
+#   §9-13 Pass probes are pinned at the call site where the type is nameable,
+#         and every endpoint in `tests/live.rs` delegates to the function in
+#         `app`'s lib rather than reimplementing it.
+#   §9-14 Every rejection row has a standing control that removes the cause it
+#         names — the pairs are tabulated in README.md.
 #
 # USAGE
 #   bash run.sh
@@ -51,8 +61,13 @@ echo "=== environment ==="
 RUSTC_V="$(rustc "+${TOOLCHAIN}" --version)"
 printf '  rustc        %s\n' "$RUSTC_V"
 if [[ "$RUSTC_V" != rustc\ ${TOOLCHAIN}\ * ]]; then
-    echo "FATAL: expected rustc ${TOOLCHAIN}; a rustup override or a missing" >&2
+    echo "FATAL: expected rustc ${TOOLCHAIN}; a TOOLCHAIN typo or a missing" >&2
     echo "       toolchain would silently measure a different compiler." >&2
+    # NOT a rustup override: `rustc +1.85.0` already wins over one (measured).
+    # What this catches is TOOLCHAIN="1.85", which resolves to 1.85.1, and a
+    # toolchain that is not installed. `docs/rules/test.md` §9-12's own rationale
+    # is a different mechanism — a copy outside the repository, where a
+    # rust-toolchain file does not travel — and applies to bare `cargo`, not `+`.
     exit 1
 fi
 
@@ -169,6 +184,13 @@ probe D5b  fail 'not general enough'                     check -p app --features
 # synchronous body can drive a non-`Send` future beside the one it returns.
 # `.await` is the only thing that propagates the obligation. See RK-017; the
 # sync-body probe is NOT in this suite and should be added.
+# Row 3 of the four-form table in docs/specs/conditional-effects.md. Rows 1 and
+# 4 have had methods behind them since #14; rows 2 and 3 were published as
+# "measured" while being desk analysis (#48). Row 2 is `d1r2_three_binders` in
+# the default build — the baseline covers it, and a `pass` row asserting only
+# `Finished` would assert nothing the exit code did not.
+probe D1r3 fail 'not general enough'                     check -p app --features d1r3-two-shared
+
 probe D5c  pass 'Finished'                               check -p app --features d5c-when-named-leak-nosend
 probe D5d  fail 'not general enough'                     check -p app --features d5d-nosend-leak-from-handler
 echo
@@ -188,12 +210,12 @@ echo
 # turns a row red (docs/rules/test.md §9-13).
 # ---------------------------------------------------------------------------
 echo "=== does it run, not just type-check? ==="
-probe B5+ pass 'test result: ok. 7 passed'               test -p app --test live
+probe B5+ pass 'test result: ok. 8 passed'               test -p app --test live
 echo
 
 # §9-2 applied to the harness itself, not only to the tests it runs: without
 # this, deleting a `probe` line above leaves the suite green. Measured.
-EXPECTED_ROWS=21
+EXPECTED_ROWS=22
 if [[ $pass -ne $EXPECTED_ROWS && $fail -eq 0 ]]; then
     echo "FATAL: $pass rows ran, expected $EXPECTED_ROWS — a probe line was removed." >&2
     exit 1

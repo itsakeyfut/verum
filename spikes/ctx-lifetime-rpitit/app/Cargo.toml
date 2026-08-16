@@ -34,7 +34,12 @@ d1-bound-lifetimes = []
 d5a-when-named-call = []
 d5b-when-named-leak = []
 d5c-when-named-leak-nosend = []
-d5d-nosend-leak-from-handler = []
+# D5d needs D5c's function. Expressed as a feature dependency rather than
+# `#[cfg(any(..))]` so the gate on that item names exactly one feature —
+# the `any(..)` form let a review mutation re-point it at the other feature
+# and leave D5c's row green with the function never compiled (#48).
+d5d-nosend-leak-from-handler = ["d5c-when-named-leak-nosend"]
+d1r3-two-shared = []
 d1e-when-unboxed-fut = []
 d2-when-capture = []
 d3-when-leak-fixed-return = []
