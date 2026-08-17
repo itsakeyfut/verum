@@ -164,13 +164,14 @@ verdict is in [`../specs/persistence.md`](../specs/persistence.md) §Verdict.
 | Constraint | What happens otherwise |
 |---|---|
 | The `Repr`'s fields must **not** be fully private | `query_as!` expands into a struct literal at the *call site*, so it is `E0451` |
-| Do not derive `Debug` / `Clone` / `Serialize` / `Deserialize` on the `Repr` | Ledger paths 4 and 3 reopen through the `Repr`, within the same crate |
+| **Any** derive on the `Repr` is a construction route — [`api-surface.md`](./api-surface.md) §8 | `Debug` (ledger path 4) and `Clone` (path 3) are the cases in point: both reopen through the `Repr`, within the same crate. §8 is the general form; do not re-enumerate the derives here |
 | The domain's inner field is private, not `pub(crate)` | `u.0.email = v` compiles from anywhere in the crate |
 | The domain **owns** a borrowable `Repr` | An `as_repr` returning a temporary is `E0515`. A newtype is one way to satisfy this, not the only one |
 
-**The general form worth remembering: any derive-generated constructor that
-assembles the struct inside its defining module is a forgery route.** The list
-above is an enumeration, and adding a single derive opens a hole.
+The table is an enumeration of *this shape's* constraints. The general form — why
+a derive can construct a type whose fields are private, and why the type's **name**
+rather than its fields is what closes it — is stated once in
+[`api-surface.md`](./api-surface.md) §8, with both measured instances (P15, P41).
 
 > **⚠️ No longer true under `#[domain]`** ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)).
 > The attribute expands into a module that is a **child** of the user's module, so a

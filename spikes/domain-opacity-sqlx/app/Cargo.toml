@@ -11,6 +11,9 @@ workspace = true
 fw.workspace = true
 mac = { path = "../mac" }
 sqlx.workspace = true
+# Optional: only P41 needs it, and the default build must stay the shape the
+# specs describe.
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true
@@ -56,3 +59,5 @@ p34-nested-as-repr = []
 p35-nested-repr-debug = []
 p36-trait-defeats = []
 p37-proof-wording = []
+# --- #35: the forgery route's second instance, previously prose-only ---
+p41-repr-deserialize = ["p10-pub-repr", "dep:serde"]

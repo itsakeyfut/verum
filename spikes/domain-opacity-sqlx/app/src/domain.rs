@@ -100,8 +100,14 @@ pub struct LooseUser(pub(crate) UserRepr);
 ///
 /// `#[derive(FromRow)]` constructs the struct inside *this* module, so a foreign
 /// crate can obtain a value without ever seeing a field.
+///
+/// P41 adds `Deserialize` under its own feature. It is the **second** instance of
+/// the same route (`api-surface.md` §8) and it had never been compiled — #13
+/// asserted it in prose. It is also the cheaper of the two: `FromRow` needs a
+/// database connection to hand the row over, `Deserialize` needs a string.
 #[cfg(feature = "p10-pub-repr")]
 #[derive(sqlx::FromRow)]
+#[cfg_attr(feature = "p41-repr-deserialize", derive(serde::Deserialize))]
 pub struct PubRepr {
     id: i64,
     name: String,

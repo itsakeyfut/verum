@@ -14,6 +14,7 @@ sqlx.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
 # P5: name UserRepr from another crate.
@@ -24,6 +25,8 @@ p11-forge-pub-repr = ["app/p10-pub-repr"]
 p12-macro-pub-repr = ["app/p10-pub-repr"]
 p14-projection = ["app/p14-hidden-module-repr"]
 p15-forge-via-select = ["app/p10-pub-repr"]
+# P41: the same route through `serde::Deserialize`. No database at all.
+p41-forge-via-json = ["app/p41-repr-deserialize"]
 # --- #33 ---
 p25-proof-forged-foreign = []
 p27-confined-foreign = []

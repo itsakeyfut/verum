@@ -172,6 +172,9 @@ probe P12 fail 'E0451' check -p separate-repo --features p12-macro-pub-repr
 # …and it does not stop forging either. P11 rejects a struct *literal*; `FromRow`
 # builds the struct inside `app`, from a row the caller supplies.
 probe P15 pass 'test result: ok. 1 passed' test -p separate-repo --features p15-forge-via-select --test forge
+# The same route's second instance, and the one #13 asserted without compiling.
+# `Deserialize` needs no database — a string literal is the whole attack.
+probe P41 pass 'test result: ok. 1 passed' test -p separate-repo --features p41-forge-via-json --test forge
 # `E0446` fires because this spike wrote `pub(crate)`. Put the `Repr` in a private
 # module as a `pub` type — the alternative the first README dismissed unprobed — and
 # the trait route opens, projection and all. fw/src/lib.rs predicted this.
@@ -294,7 +297,7 @@ echo
 # The deleted-row guard. This spike predates it (#43's lesson, re-planted in
 # #48): without it, removing a `probe` line leaves the suite green with one less
 # thing measured.
-EXPECTED_ROWS=45
+EXPECTED_ROWS=46
 if [[ $((pass + fail)) -ne $EXPECTED_ROWS ]]; then
     printf 'FATAL: %d rows ran, expected %d — a probe line was removed.\n' "$((pass + fail))" "$EXPECTED_ROWS" >&2
     exit 1

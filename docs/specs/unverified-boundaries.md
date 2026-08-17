@@ -51,8 +51,8 @@ Closing routes individually is whack-a-mole. The causes reduce to three.
 |---|---|---|---|
 | 1 | `user.email = v`, direct assignment | Domain opacity (private fields) | **Closed in the First PoC** |
 | 2 | `*user = other_user` (fetch two with `find` and swap) | Restricting the construction route does not close it | **Stated** (below) |
-| 3 | Escaping a projection with `into_owned()` | **Not provided** | **Closed in the First PoC.** ⚠️ Deriving `Clone` on `Repr` brings it back (see path 21) — **confined to the domain's own module** once the `Repr` carries no visibility modifier either (P30, ADR-0010) |
-| 4 | A data leak through `Debug` / `Serialize` | A custom implementation emitting declared fields only, derive-generated | **Closed in the First PoC.** ⚠️ The response is **imposed only on the domain side** — deriving `Debug` on `Repr` leaks from within the same crate (see path 21). **Confined to the domain's own module** once the `Repr` carries no visibility modifier: the name is unreachable, so there is no `Debug` to call (P30, ADR-0010) |
+| 3 | Escaping a projection with `into_owned()` | **Not provided** | **Closed in the First PoC.** ⚠️ A derive on the `Repr` brings it back — the route's general form is [`../rules/api-surface.md`](../rules/api-surface.md) §8, `Clone` is this path's instance (see path 21). **Confined to the domain's own module** once the `Repr` carries no visibility modifier either (P30, ADR-0010) |
+| 4 | A data leak through `Debug` / `Serialize` | A custom implementation emitting declared fields only, derive-generated | **Closed in the First PoC.** ⚠️ The response is **imposed only on the domain side** — a derive on the `Repr` leaks from within the same crate ([`../rules/api-surface.md`](../rules/api-surface.md) §8; `Debug` is this path's instance, see path 21). **Confined to the domain's own module** once the `Repr` carries no visibility modifier: the name is unreachable, so there is no `Debug` to call (P30, ADR-0010) |
 | 5 | Mutation through interior mutability (`RefCell` / `Mutex` / `Cell`) | Restrict domain field types (a whitelist until `Freeze` stabilises) | **Closed in the First PoC** |
 | 21 | **`User::from_repr(UserRepr { .. })` / `as_repr()` reachable from anywhere in the domain's crate** | The derive emits the `Repr`, the constructor **and** the repository into a **macro-owned private module** and re-exports the domain from it (#33 / [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | **Closed** for all user-written code — handler, service, a helper beside the user's own declaration, the crate-root layout, the read half, and foreign crates are all `E0624` (P31/P32/P34/P35/P27). ⚠️ **Conditional**: closed only while the conversion stays an *inherent* method — on a public trait it reopens completely (P36). Measured in T-M1-01 / #13 and #33; below |
 
@@ -164,11 +164,14 @@ confined to the same crate** — an external crate cannot reach `as_repr` and ge
 `E0624` (measured; this originally said "leaks from another crate too", which was
 wrong).
 
-The constraints on generated code gain "do not derive `Debug` / `Clone` /
-`Serialize` / **`Deserialize`** on `Repr`". **The general form to remember: any
-derive-produced constructor that assembles the struct inside the defining module
-is a forging route.** `FromRow` and `Deserialize` are the same mechanism, and an
-enumerated ban list opens a hole the moment one more derive is added.
+**The route's general form is stated once**, in
+[`../rules/api-surface.md`](../rules/api-surface.md) §8 — including why an
+enumerated ban list is the wrong shape for it. This paragraph used to restate it
+and to enumerate the derives; #35 reduced it to this pointer.
+
+What was asserted here without evidence is worth naming: "`FromRow` and
+`Deserialize` are the same mechanism". **P41 measures it** (#35) — a foreign crate
+forges from a JSON string alone, no database. §8 carries both instances.
 
 Reproduction and the probe table: `spikes/domain-opacity-sqlx/`
 (`bash run.sh`). The specification-side account is in
