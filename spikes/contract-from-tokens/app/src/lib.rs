@@ -484,11 +484,15 @@ impl Handler for Noop {
 // ---------------------------------------------------------------------------
 // R2 — could the helper simply live in the block the attribute sees?
 //
-// No. A trait impl may contain only the trait's members, so `apply` cannot go
-// beside `handle`: `E0407`. P7's blindness is therefore **structural** — there is
-// no arrangement of the same code in which the macro sees both. Reaching the
-// helper needs a second item, which is the cross-item analysis
-// `effect-inference.md` lists avoiding as the approach's advantage.
+// Not in the *trait impl*: a trait impl may contain only the trait's members, so
+// `apply` beside `handle` is `E0407`.
+//
+// But that does NOT make the blindness structural, and an earlier version of this
+// file said it did. Probe X1 is the refutation: the same helper written as a
+// nested `fn` inside `handle`'s body IS seen, and so is a trait default method.
+// The wall is the **item**, not `handle` — syn's visitor descends into nested
+// items and closures. P7 is blind because the helper sits in a *sibling* item,
+// which is a placement, not a law.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "r2-helper-in-the-observed-block")]

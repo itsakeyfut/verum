@@ -237,7 +237,8 @@ recorder of intent.
 ### The premise, measured in Phase 1 (was: unverified)
 
 > **⚠️ RESOLVED by T-M1-07 (#37): the premise does not hold as written.** Token
-> scanning recovers five of seven observable keys, including the conditional
+> scanning recovers five of seven observable key *instances* — **three of the five
+> distinct keys** (`mutates`, `creates`, `emits`; not `calls`, not `reads`) — including the conditional
 > split, and misses `calls` and field-level `reads`. Effects are **not**
 > syntactically confined to `handle` — see §Decision (Q-A) above for the
 > measurement, and `spikes/contract-from-tokens/` to reproduce it.

@@ -97,7 +97,9 @@ ctx.spawn()      → Spawn<Job>
 ```
 
 This keeps the state where **following the lines that begin with `ctx.`
-enumerates every effect that handler causes.**
+enumerates every effect that handler causes** — a *convention*, and T-M1-07
+measured how far it holds. It is not a property of the language: see
+§The part that remains convention below, which #37 widened considerably.
 
 ### The part enforced by types
 
