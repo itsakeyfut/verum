@@ -55,7 +55,10 @@ pub fn domain_repr_only(input: TokenStream) -> TokenStream {
 pub fn domain_adr0010_derive(input: TokenStream) -> TokenStream {
     let ast: syn::DeriveInput = syn::parse(input).expect("derive input");
     let name = &ast.ident;
-    let m = syn::Ident::new(&format!("__verum_{}", name.to_string().to_lowercase()), name.span());
+    let m = syn::Ident::new(
+        &format!("__verum_{}", name.to_string().to_lowercase()),
+        name.span(),
+    );
     let repr = syn::Ident::new(&format!("{name}Repr"), name.span());
     quote! {
         mod #m {
@@ -137,10 +140,20 @@ pub fn domain_attr(attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #[allow(non_camel_case_types, dead_code, clippy::all)]
         mod #m {
-            // NOT `pub`, and NOT re-exported below. ADR-0010: "module-private:
-            // paths 3/4 shut with it".
+            // NO visibility modifier, and NOT re-exported below. ADR-0010's
+            // listing annotates this exact line "module-private: paths 3/4 shut
+            // with it", and the ledger states those paths' closing condition as
+            // "once the `Repr` carries no visibility modifier".
+            //
+            // `pub(super)` was here and review caught it. It is visible to the
+            // PARENT module — the user's — so at the crate root it is `pub(crate)`
+            // and the `Repr` is nameable crate-wide (measured: compiles; with no
+            // modifier, `E0603`). That puts the exposure radius back under the
+            // user's layout, which is the one property ADR-0010 chose option E to
+            // eliminate. The token came from ADR-0011's P40 sketch, where the
+            // module holds only an `impl` and it is harmless.
             #fwd
-            pub(super) struct #repr { #(#fields),* }
+            struct #repr { #(#fields),* }
 
             pub struct #name(#repr);
 
@@ -221,7 +234,7 @@ pub fn domain_impl_only_derive(input: TokenStream) -> TokenStream {
     quote! {
         #[allow(dead_code)]
         mod #m {
-            pub(super) struct #repr { pub email: String }
+            struct #repr { pub email: String }
             // The impl block lives HERE, so `from_repr`'s visibility is this module.
             impl super::#name {
                 fn from_repr(r: #repr) -> Self { Self { email: r.email } }

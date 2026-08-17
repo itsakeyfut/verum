@@ -41,7 +41,7 @@ user's own item (`E0255`, probe P38). ADR-0010's own text says "derive-owned" an
 >
 > ```rust,ignore
 > mod __verum_account {
->     pub(super) struct AccountRepr { .. }
+>     struct AccountRepr { .. }               // no modifier — see the note below
 >     impl super::Account { fn from_repr(r: AccountRepr) -> Self { .. } }
 > }
 > ```
@@ -150,9 +150,46 @@ manifest.
 checked the **axum family only**; `sqlx` was in `FORBIDDEN_ROOTS`, which only
 `public-api` mode consults — and generated tokens never appear in `verum`'s
 rendered public API. #34 described this as "the guard scans source, not generated
-output"; measured, the cause was the narrower vocabulary. The mode now checks the
-whole forbidden list, with the `runtime/` exemption still axum-only, and the
-hazard was planted and confirmed red.
+output"; measured, the cause was the narrower vocabulary. The mode now has three
+rules: the **runtime-only** crates (the axum family plus `tower` / `hyper` /
+`hyper_util` / `matchit`, which `design.md` §219 permits inside `runtime/`) may be
+named only there; nothing forbidden may be re-exported; and the complement —
+everything `runtime/` has no licence to name, a database crate being the case in
+point — may not be named anywhere in `crates/`.
+
+The **permissive** set is the one written out, so the strict set is its
+complement. That direction is deliberate: derived the other way round, a crate
+added to `FORBIDDEN_ROOTS` alone became silently *exempt* inside `runtime/` — the
+same fail-open as the hand-copied list it replaced, in the opposite direction. A
+cardinality assertion pins the subset relation, because `set -e` does not
+propagate out of process substitution and a failing `comm` would otherwise leave
+the vocabulary empty and the guard green.
+
+Five fixtures were added to `check-api-boundary-test.sh` (11 cases to 16), and
+each rule was verified to turn that suite red when its body is removed — the
+first version of this change had no fixture, so deleting a rule left 11/11 green.
+
+### The one line the emitted shape must not soften
+
+The `Repr` carries **no visibility modifier**. Not `pub`, not `pub(crate)`, and
+**not `pub(super)`** — which is the mistake this record's first implementation made,
+and which review caught by compiling:
+
+| emitted | reachable from another module of the user's crate |
+|---|---|
+| `pub(super) struct Repr` | **yes** — at the crate root `pub(super)` *is* `pub(crate)` |
+| `struct Repr` | no — `E0603` |
+
+[ADR-0010](./0010-domain-constructor-confined-by-module-privacy.md)'s listing
+annotates this exact line *"module-private: paths 3/4 shut with it"*, and
+`unverified-boundaries.md` states those paths' closing condition as **"once the
+`Repr` carries no visibility modifier"**. `pub(super)` puts the exposure radius back
+under the user's module layout, which is the single property ADR-0010 chose option E
+to eliminate.
+
+Probes **P39d** and **P39e** pin it, and they are **path-qualified on purpose**: the
+first version wrote the unqualified name, which only measures "the `Repr` was left
+out of the re-export list" and stayed green through the whole regression.
 
 ### Consequences
 

@@ -63,7 +63,7 @@ readonly FORBIDDEN_ROOTS=(
   tower tower_service tower_layer tower_http
   hyper hyper_util
   matchit
-  sqlx sqlx_core sqlx_postgres sqlx_macros
+  sqlx sqlx_core sqlx_postgres sqlx_macros sqlx_sqlite
 )
 
 # `runtime/` is the only module allowed to know about Axum (docs/rules/design.md §2).
@@ -81,10 +81,24 @@ readonly AXUM_ROOTS=(axum axum_core axum_extra axum_macros)
 # `cargo public-api`, because generated tokens are not part of `verum`'s rendered
 # API. So rule (c) is scoped to the database family alone.
 #
-# Derived, not hand-copied: an earlier version duplicated `FORBIDDEN_ROOTS` minus
-# axum by hand, so adding a crate to one list silently left rule (c) not covering
-# it. That is RK-016's rule 7 — derive the target names from the declaring side.
-readonly DB_ROOTS=(sqlx sqlx_core sqlx_postgres sqlx_macros sqlx_sqlite)
+# `runtime/` legitimately names hyper, tower, tower-http and matchit — they are
+# `verum`'s own dependencies and `design.md` §219 forbids them only *outside*
+# `runtime/`. An earlier version of rule (c) barred them everywhere, which would
+# have gone red on the first line of the real runtime.
+#
+# THE PERMISSIVE SET IS THE ONE WRITTEN OUT, AND THAT DIRECTION IS DELIBERATE.
+# The strict set is derived as the complement, so a crate added to
+# `FORBIDDEN_ROOTS` alone defaults to **barred everywhere, `runtime/` included** —
+# loud and safe. Review measured the other direction: with the permissive set
+# derived instead, a new database crate in `FORBIDDEN_ROOTS` silently became
+# *exempt* inside `runtime/`, which is the same fail-open as the hand-copied list
+# it replaced. Whoever adds a crate here sees a failure and classifies it.
+readonly RUNTIME_ONLY=(
+  axum axum_core axum_extra axum_macros
+  tower tower_service tower_layer tower_http
+  hyper hyper_util
+  matchit
+)
 
 readonly SCAN_ROOT="${VERUM_SCAN_ROOT:-crates}"
 readonly RUNTIME_DIR="$SCAN_ROOT/verum/src/runtime"
@@ -116,14 +130,28 @@ check_imports() {
   # `design.md` §219 forbids "outside `runtime/`" (tower, hyper_util, …). Before
   # this, (a) was axum-only, so `tower::` in `lib.rs` passed both rules; review
   # found the gap while checking that (c) had not over-reached the other way.
-  mapfile -t RUNTIME_ONLY < <(
+  # The strict set: everything forbidden that `runtime/` has no licence to name.
+  # Derived, so a new entry in `FORBIDDEN_ROOTS` lands here by default.
+  local -a STRICT
+  mapfile -t STRICT < <(
     comm -23 <(printf '%s\n' "${FORBIDDEN_ROOTS[@]}" | sort) \
-             <(printf '%s\n' "${DB_ROOTS[@]}" | sort)
+             <(printf '%s\n' "${RUNTIME_ONLY[@]}" | sort)
   )
+  # `set -e` does NOT propagate out of process substitution, so a failing `comm`
+  # leaves this empty — and an empty alternation matches nothing, so the guard would
+  # go green on a violation. Measured with a failing `comm` shim in review.
+  # The count also pins `RUNTIME_ONLY ⊆ FORBIDDEN_ROOTS`.
+  local -i want=$(( ${#FORBIDDEN_ROOTS[@]} - ${#RUNTIME_ONLY[@]} ))
+  if [ "${#STRICT[@]}" -ne "$want" ]; then
+    fail "error: STRICT has ${#STRICT[@]} entries, expected ${want}."
+    fail "       Either \`comm\` failed, or RUNTIME_ONLY is not a subset of"
+    fail "       FORBIDDEN_ROOTS. Both make rule (c) match nothing."
+    return 1
+  fi
   axum_re="(^|[^A-Za-z0-9_])($(alternation "${RUNTIME_ONLY[@]}"))::"
   # Everything forbidden that is NOT axum. `runtime/` has a documented reason to
   # name axum and none to name sqlx, so the two get different rules — see (c).
-  db_re="(^|[^A-Za-z0-9_])($(alternation "${DB_ROOTS[@]}"))::"
+  db_re="(^|[^A-Za-z0-9_])($(alternation "${STRICT[@]}"))::"
   # `(::)?` matters: `pub use ::axum::Router;` is ordinary Rust, not obfuscation,
   # and inside runtime/ rule (a) permits axum — so without it that line passes
   # both rules.
@@ -156,7 +184,7 @@ check_imports() {
     # rather than in check_public_api.
     hits=$(printf '%s\n' "$body" | grep -nE "$db_re" || true)
     if [ -n "$hits" ]; then
-      fail "error: a database crate is named in Verum's own source — $file"
+      fail "error: a crate `runtime/` may not name is used in Verum's own source — $file"
       printf '%s\n' "$hits" | sed "s|^|    $file:|" >&2
       status=1
     fi

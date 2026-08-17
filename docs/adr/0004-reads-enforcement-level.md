@@ -28,7 +28,7 @@ Two statements in the specs are each defensible and cannot both be acted on:
 
 * **The derive emits capability-requiring getters.**
   `docs/specs/mutation-contract.md` lists "2. Capability-checked getters" among
-  what `#[derive(Domain)]` generates, and `docs/specs/read-contract.md` says
+  what `#[domain]` generates, and `docs/specs/read-contract.md` says
   Domain opacity plus those getters already restricts reading undeclared fields.
 * **`reads` is metadata only.** `docs/specs/read-contract.md` and
   `docs/specs/ai-context.md` both emit `"level": "metadata_only"` for it

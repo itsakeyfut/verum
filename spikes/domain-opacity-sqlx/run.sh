@@ -203,7 +203,13 @@ probe P39b fail 'E0624' check -p app --features p39b-attribute-forgery
 # 3/4 shut with it". Review found this row missing, and found that its absence had
 # let the macro re-export the Repr AND expose `pub fn build(r: Repr)`, which together
 # forged a domain from invented values, from a foreign crate included.
-probe P39d fail 'E0422' check -p app --features p39d-repr-not-nameable
+# Path-qualified on purpose: the first version wrote the unqualified name and
+# got E0422, which only measures "omitted from the re-export". It stayed green
+# while the macro emitted `pub(super) struct Repr` — reachable crate-wide.
+probe P39d fail 'E0603' check -p app --features p39d-repr-not-nameable
+# And from another module of the user's crate, which is exactly where
+# `pub(super)` was reachable (P33's lesson, transposed onto the Repr).
+probe P39e fail 'E0603' check -p app --features p39e-repr-not-nameable-elsewhere
 # P39b/P39d's counter-evidence: the generated repository still works (ARK-002).
 probe P39c pass 'Finished' check -p app --features p39c-legitimate-route
 #
@@ -288,7 +294,7 @@ echo
 # The deleted-row guard. This spike predates it (#43's lesson, re-planted in
 # #48): without it, removing a `probe` line leaves the suite green with one less
 # thing measured.
-EXPECTED_ROWS=44
+EXPECTED_ROWS=45
 if [[ $((pass + fail)) -ne $EXPECTED_ROWS ]]; then
     printf 'FATAL: %d rows ran, expected %d — a probe line was removed.\n' "$((pass + fail))" "$EXPECTED_ROWS" >&2
     exit 1

@@ -187,9 +187,14 @@ impl User {
 
 > **⚠️ No longer true under `#[domain]`** ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)).
 > The attribute expands into a module that is a **child** of the user's module, so a
-> helper written beside the declaration is *outside* the confinement radius —
-> `E0616`, measured in #34's review. The residue described here is the **derive**
-> form's.
+> helper written beside the declaration cannot reach the **constructor** —
+> `E0624`, measured. What it *can* still reach is the `Repr`, if the `Repr`
+> carries any visibility modifier; with none (as `#[domain]` emits, and as the
+> ledger states as paths 3/4's closing condition) that is `E0603` too.
+> An earlier version of this note said `E0616` and said the helper was outside
+> the radius outright: `E0616` is the *field* error (`u.0.email`), which is a
+> different measurement, and the unqualified claim was false for the `Repr`.
+> The residue described below is the **derive** form's.
 
 > **⚠️ This shape does mesh with sqlx, but it does not express "the trust boundary
 > is the repository implementation" in types** (compile-verified in T-M1-01 / #13).

@@ -115,13 +115,18 @@ The grep side has **three** rules:
   generated tokens are not part of `verum`'s rendered API (#34).
 
 The (a)/(c) split is why `runtime/` keeps its exemption for its own dependencies
-but not for a database crate, which it has no reason to name. Both lists are
-derived from `FORBIDDEN_ROOTS` rather than hand-copied — an earlier version
-duplicated it, so adding a crate to one list left the other silently uncovered.
+but not for a database crate, which it has no reason to name. The **permissive** set (`RUNTIME_ONLY`) is written out and the strict one is
+derived as its complement. That direction is deliberate: derived the other way
+round, a crate added to `FORBIDDEN_ROOTS` alone became silently *exempt* inside
+`runtime/`. A cardinality assertion pins the subset relation, so a failing
+`comm` cannot leave the vocabulary empty.
 
-- **(a)** Naming anything in the `axum` family outside
-  `crates/verum/src/runtime/` is forbidden ([design.md](./design.md) §2, the
-  module boundary).
+- **(a)** Naming any **runtime-only** crate outside `crates/verum/src/runtime/` is
+  forbidden — the axum family plus `tower` / `hyper` / `hyper_util` / `matchit`,
+  which [design.md](./design.md) §219 forbids only *outside* `runtime/`. The set
+  is written out in the script as `RUNTIME_ONLY`; rule (c)'s set is derived as its
+  complement, so a crate added to `FORBIDDEN_ROOTS` alone defaults to barred
+  everywhere rather than exempt inside `runtime/`.
 - **(b)** A `pub use` of a forbidden crate is forbidden **everywhere, including
   inside `runtime/`**, and that includes a leading `::`
   (`pub use ::axum::Router;`). Without this, "re-export in `runtime/`, re-export
@@ -171,7 +176,7 @@ This section rests on two grounds, and only one of them lapses.
 | The `public-api` mode and the guard's own tests | Structurally unchanged; only crate names in the list and the fixtures |
 
 > **Careful**: the script's header says "the check that buys the freedom to drop
-> Axum later" and the variable is called `AXUM_ROOTS`. Phase 12's task is named
+> Axum later" and the variable is called `RUNTIME_ONLY`. Phase 12's task is named
 > "remove Axum", so **there is a real risk of mistaking this for cleanup and
 > deleting it wholesale.** Deleting it fails nothing, and the guard for capability
 > completeness quietly disappears. The same note is at the top of the script.

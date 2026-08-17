@@ -3,8 +3,8 @@
 //! common shape, and it is the shape under which `pub(crate)` is widest.
 pub mod confined;
 pub mod domain;
-pub mod nested;
 pub mod handler;
+pub mod nested;
 pub mod repo;
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,10 @@ pub struct Adr0010Attr {
 
 #[cfg(feature = "p39-adr0010-from-attribute")]
 pub fn p39_uses_the_expansion() -> String {
-    Adr0010AttrRepository.load("db@example.com").email().to_owned()
+    Adr0010AttrRepository
+        .load("db@example.com")
+        .email()
+        .to_owned()
 }
 
 /// P39b — the forgery ADR-0010 exists to reject. Expected to **fail**, `E0624`.
@@ -113,17 +116,34 @@ pub fn p39b_forge() -> Adr0010Attr {
     Adr0010Attr::from_repr(todo!())
 }
 
-/// P39d — **the `Repr` is not nameable from outside.** Expected to **fail**,
-/// `E0433`.
+/// P39d — **the `Repr` is not nameable from outside**, by its *visibility*.
+/// Expected to **fail**, `E0603`.
 ///
-/// This is the row review found missing. The first version re-exported the `Repr`
-/// and exposed `pub fn build(r: Repr)`, which together forged a domain from
-/// invented values — from the app crate *and from a foreign crate*. ADR-0010 marks
-/// the `Repr` "module-private: paths 3/4 shut with it", and nothing measured it
-/// under the attribute form.
+/// This row is **path-qualified on purpose.** The first version wrote the
+/// unqualified name and got `E0422`, which only measures "the Repr was left out of
+/// the re-export list" — it stayed green while the macro emitted
+/// `pub(super) struct Repr`, i.e. a Repr reachable from anywhere in the user's
+/// crate. Review mutation-verified that blindness. Naming the module path makes the
+/// visibility itself the thing under test.
 #[cfg(feature = "p39d-repr-not-nameable")]
 pub fn p39d_name_the_repr() {
-    let _ = Adr0010AttrRepr { email: String::new() };
+    let _ = crate::__verum_adr0010_attr::Adr0010AttrRepr {
+        email: String::new(),
+    };
+}
+
+/// P39e — the same from **another module of the user's crate**, which is where
+/// `pub(super)` was reachable. Expected to **fail**, `E0603`.
+///
+/// P33's lesson transposed onto the `Repr`: at the crate root `pub(super)` *is*
+/// `pub(crate)`, so a row that only looks from the declaring scope cannot see it.
+#[cfg(feature = "p39e-repr-not-nameable-elsewhere")]
+pub mod p39e_elsewhere {
+    pub fn touch() {
+        let _ = crate::__verum_adr0010_attr::Adr0010AttrRepr {
+            email: String::new(),
+        };
+    }
 }
 
 /// P39c — the legitimate route, so P39b/P39d are not passing because the module is
@@ -132,7 +152,10 @@ pub fn p39d_name_the_repr() {
 /// one).
 #[cfg(feature = "p39c-legitimate-route")]
 pub fn p39c_legitimate() -> String {
-    Adr0010AttrRepository.load("alice@example.com").email().to_owned()
+    Adr0010AttrRepository
+        .load("alice@example.com")
+        .email()
+        .to_owned()
 }
 
 /// P40 — **a derive CAN own the confinement radius.** Expected to **compile**.
