@@ -40,7 +40,7 @@ Everything below is **detected at layer 1**. These are mandatory.
 
 | Check | Reason |
 |---|---|
-| A `pub` field on a domain | One of the routes that voids the whole contract, and the one a macro can catch ([`../specs/mutation-contract.md`](../specs/mutation-contract.md)). **It is not the only route** — see ledger path 21 |
+| A `pub` field on a domain | **A lint under `#[domain]`** — the attribute emits a private inner field, so it voids nothing ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)); still rejected, so the user learns their `pub` means nothing ([`../specs/mutation-contract.md`](../specs/mutation-contract.md)). **It is not the only route** — see ledger path 21 |
 | `mutates` / `creates` / `deletes` on a read-only method (`Get`, `Head`) | Including inside `when`. Types cannot check this ([`type-level.md`](./type-level.md)) |
 | The same declaration at top level and inside `when` | Otherwise it surfaces as an unrelated `E0283` |
 | `mutates` conflicting with `forbidden` | The only thing `forbidden` checks |
@@ -172,18 +172,27 @@ verdict is in [`../specs/persistence.md`](../specs/persistence.md) §Verdict.
 assembles the struct inside its defining module is a forgery route.** The list
 above is an enumeration, and adding a single derive opens a hole.
 
+> **⚠️ No longer true under `#[domain]`** ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)).
+> The attribute expands into a module that is a **child** of the user's module, so a
+> helper written beside the declaration is *outside* the confinement radius —
+> `E0616`, measured in #34's review. The residue described here is the **derive**
+> form's.
+
 **The guarantee's scope is "from outside the defining module", not a type
 boundary.** The macro expands into the same module as the user's `struct User`,
 so an `impl` or helper written beside it sits on the permissive side. The
 shortest way around an `E0616` for an AI is to move the code into the domain's
 own file.
 
-**Undecided (#34)**: a **derive cannot add an item named after its input**
-(`E0428`), so `pub struct User(UserRepr)` cannot come from a derive. But the
-signature `as_repr(&self) -> &Repr` **has several shapes a derive can satisfy**,
-so abandoning the derive is not necessarily required. Who attaches
-`#[derive(sqlx::FromRow)]` is also open — a user cannot add a derive to generated
-output, and the pass-through approach has been confirmed to work.
+**Settled (#34, [ADR-0011](../adr/0011-domain-is-an-attribute-macro.md))**: the
+Domain macro is **`#[domain]`, an attribute**. A derive cannot add an item named
+after its input (`E0428`), and cannot emit ADR-0010's shape as written (`E0255`) —
+but it *can* own the confinement radius by emitting only the `impl` block into the
+generated module (probe P40, `E0624` still holds). What decides it is that **a
+derive cannot consume the user's item**: the transparent original survives, so
+`user.email = v` compiles beside the declaration and the field list is the user's,
+not the macro's. `#[domain(repr_derive(..))]` forwards derives to the generated
+`Repr`; the path resolves in the user's crate, so `verum-macros` never names sqlx.
 
 ### Avoid identifier collisions
 
@@ -288,7 +297,7 @@ crates/verum/          ← the framework; depends on verum-macros and re-exports
 
 ```rust,ignore   // needs a crate or a verum-private module this harness does not carry
 // crates/verum/src/lib.rs
-pub use verum_macros::{contract, endpoint, Domain, Event, Repository, Request, View};
+pub use verum_macros::{contract, endpoint, domain, Event, Repository, Request, View};
 ```
 
 Users depend on `verum` alone. They never depend on `verum-macros` directly.

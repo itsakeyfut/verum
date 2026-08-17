@@ -101,10 +101,10 @@ impl UserRepository for PgUserRepository {
 > domain the call site is *this* module, so the `Repr` can carry no modifier either
 > — which also closes ledger paths 3 and 4 through it (P30). See ADR-0010.
 
-### Verdict (T-M1-01 / #13, extended by #33. **37 probes, compile-verified**)
+### Verdict (T-M1-01 / #13, extended by #33 and #34. **44 probes, compile-verified**)
 
 Reproduce with `spikes/domain-opacity-sqlx/` (`bash run.sh` →
-`37 as specified, 0 unexpected`). **Run it on an otherwise idle checkout**: a
+`44 as specified, 0 unexpected`). **Run it on an otherwise idle checkout**: a
 concurrent `cargo` (an IDE checker, a second shell) has been observed to produce a
 spurious `UNEXPECTED` row, because the `touch` that defeats caching runs once at the
 top rather than per probe.
@@ -127,9 +127,12 @@ table established.
    **the derive does not need `pub(in ...)`.** Emitting no modifier at all confines
    the constructor to the domain's own module, and emitting the repository into
    that module keeps it callable. Measured in #33 — see below.
-3. **The generated shape is undecided.** A derive **cannot add an item with the
-   same name as its input** (`E0428`), so `pub struct User(UserRepr)` is not
-   something `#[derive(Domain)]` can emit.
+3. **The generated shape is decided: `#[domain]`, an attribute**
+   ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)). A derive cannot add an
+   item named after its input (`E0428`), nor emit ADR-0010's confinement shape —
+   the re-export collides with the user's own item (`E0255`). An attribute consumes
+   it. `#[domain(repr_derive(sqlx::FromRow))]` forwards derives to the generated
+   `Repr`; they resolve in the **user's** crate, so Verum never names sqlx.
 
 **Field-level mutation's type enforcement itself is intact.** What broke is
 neither sqlx nor the type enforcement, but `Repr` as a sideways bypass.
@@ -143,6 +146,12 @@ neither sqlx nor the type enforcement, but `Repr` as a sideways bypass.
 | The domain's inner field is private (not `pub(crate)`) | `u.0.email = v` compiles from anywhere in the crate |
 | The domain **owns** a borrowable `Repr` | An `as_repr` returning a temporary is `E0515`. **A newtype is one way to satisfy this, not a requirement** |
 
+> **⚠️ No longer true under `#[domain]`** ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)).
+> The attribute expands into a module that is a **child** of the user's module, so a
+> helper written beside the declaration is *outside* the confinement radius —
+> `E0616`, measured in #34's review. The residue described here is the **derive**
+> form's.
+
 **The guarantee is "from outside the defining module", not a type boundary.**
 From the defining module and its children, `u.0.email = v` compiles. The macro
 expands in the same module as the user's `struct User`, so code written next to
@@ -152,32 +161,24 @@ private named field touched from outside the module gives `E0616`. **`E0615` and
 `E0609` cannot be replaced with `#[diagnostic::…]`** — those attributes attach
 only to trait definitions and trait impls (measured).
 
-#### Undecided — settled in #34 (the Domain macro form)
+#### Settled in #34 ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md))
 
-> This section was headed "settled in #17 / #18" until #33. Both are closed and
-> **neither settled any of the three**, which are all consequences of the macro's
-> shape; #34 is where that is decided. How path 21 is *closed* — the other thing
-> the old heading was read as promising — is settled below, in #33.
+All three consequences of the macro's shape are decided. The reasoning is in the
+ADR; the outcomes are:
 
-1. **Which macro shape.** `as_repr(&self) -> &Repr` has several shapes a derive
-   can satisfy (the user writes the newtype and the derive emits only `Repr`; or
-   `Repr` becomes a type alias for the domain — both measured to compile). So
-   "the signature and a derive are incompatible" is **not something that was
-   measured.** What was measured is `E0428` alone. Moving to an attribute macro
-   loses no layer-1 check (measured), but the description of `Domain` as a derive
-   propagates to **15 files / 23 places**, two of which are the bodies of issues
-   already filed. The versioning impact is effectively zero (`verum-macros`
-   generates nothing today).
-2. **Who attaches `#[derive(sqlx::FromRow)]`.** A user cannot add a derive to a
-   generated item (measured). Pass-through
-   (`#[domain(repr_derive(sqlx::FromRow))]`) has been **implemented and confirmed
-   to work** — in that shape the generated derive resolves in the user's crate, so
-   `verum-macros` does not depend on sqlx. Only the option "verum emits
-   `sqlx::FromRow` unconditionally" contradicts the dependency table.
-3. **The enforcement level of rejecting `pub` fields depends on choice 1.** In
-   the attribute shape the macro consumes the input's `pub`, so it is a **lint**;
-   in the derive-plus-flat shape the user's `pub` is real, so it is a
-   **guarantee**. A change of enforcement level is defined as breaking.
+1. **The macro is `#[domain]`, an attribute.** Not because a derive cannot own the
+   confinement — it can (probe P40) — but because **a derive cannot consume the
+   user's item**, so the transparent original survives beside the opaque one
+   (P40b) and the field list the markers are generated from is not one the macro
+   controls.
+2. **`#[domain(repr_derive(..))]` forwards derives to the `Repr`.** Only the macro
+   can attach a derive to a generated item. The forwarded path resolves in the
+   **user's** crate, so `verum-macros` never depends on sqlx.
+3. **Rejecting a `pub` field is a lint, not the guarantee.** The attribute consumes
+   the user's `pub` and emits a private inner field, so `user.email = v` fails
+   whether or not the check runs — `E0615` with a getter present, `E0616` for
+   `u.0.email`, and `E0616` even from a helper written beside the declaration,
+   which is where the derive form left a residue.
 
 #### Alternatives (all measured. **None improves on the status quo**)
 
@@ -197,7 +198,7 @@ enough to be usable opens it enough to be forgeable.**
 #### How path 21 is closed (#33, measured — ADR-0010)
 
 **The derive emits the `Repr`, the constructor and the repository into a
-derive-owned private module, and re-exports the domain type from it.**
+macro-owned private module, and re-exports the domain type from it.**
 
 ```rust,ignore   // fragment, not a complete item
 mod __verum_user {
@@ -223,7 +224,7 @@ pub use __verum_user::{User, UserRepository};
 spec's first answer. Two holes, both measured: a helper written beside the user's
 own `struct User` forges (P29), and if the domain is declared at the **crate root**
 then "no visibility modifier" *is* `pub(crate)`, so the mechanism buys nothing at
-all (P33). A derive-owned module has neither property, because its radius is chosen
+all (P33). A macro-owned module has neither property, because its radius is chosen
 by the derive rather than by the code being guarded.
 
 **The conversion must stay an inherent method.** A trait method's visibility is the

@@ -1,7 +1,7 @@
 # T-M1-01 / #13 — Domain opacity × sqlx, extended by #33
 
 ```
-rustc 1.97.1 · sqlx 0.9.0 · SQLite · 37 probes · 148 packages (4 members + 144 deps)
+rustc 1.97.1 · sqlx 0.9.0 · SQLite · 44 probes · 148 packages (4 members + 144 deps)
 ```
 
 **Read the probe table. Everything else here is one sentence per row.**
@@ -109,8 +109,16 @@ Recorded as [ADR-0010](../../docs/adr/0010-domain-constructor-confined-by-module
 | P35 | a `Debug` leak through the `Repr`, via a real value | fail | `E0624` |
 | P36 | the conversion moved onto the public `fw::DomainRepr` trait | pass | **pass — reopens it** |
 | P37 | the bound gate's `E0277`, with Verum's `message` and `note` | fail | `E0277` |
+| **P38** | ADR-0010's shape **verbatim** from a derive | fail | `E0255` — the re-export collides with the user's own item |
+| **P40** | a derive emitting only the `impl` block into the module | pass | a derive **can** own the confinement radius |
+| **P40a** | the forgery under P40's shape | fail | `E0624` — the wall holds there too |
+| **P40b** | `x.email = v` beside the declaration, under P40 | pass | **the deciding row**: a derive cannot consume the item, so the transparent original survives |
+| **P39** | ADR-0010's shape from an attribute | pass | the row references the expansion — an earlier version passed on an *empty* one |
+| **P39b** | the forgery ADR-0010 exists to reject | fail | `E0624` |
+| **P39d** | naming the `Repr` from outside the module | fail | `E0422` — "module-private: paths 3/4 shut with it" |
+| **P39c** | the generated repository's legitimate route | pass | ARK-002's checked alternative |
 
-`bash run.sh` → `result: 37 as specified, 0 unexpected`, on 1.97.1 and on nightly 1.99.
+`bash run.sh` → `result: 44 as specified, 0 unexpected`, on 1.97.1 and on nightly 1.99.
 
 **Run it on an otherwise idle checkout.** Review hit a spurious `UNEXPECTED` row
 twice, from two independent reviewers, when a second `cargo` (an IDE checker) held

@@ -69,8 +69,23 @@ readonly FORBIDDEN_ROOTS=(
 # `runtime/` is the only module allowed to know about Axum (docs/rules/design.md §2).
 readonly AXUM_ROOTS=(axum axum_core axum_extra axum_macros)
 
-# Overridable so check-api-boundary-test.sh can point the same code at a fixture
-# tree. Nothing else should set it.
+# `runtime/` legitimately names hyper, tower, tower-http and matchit — they are
+# `verum`'s own dependencies and `design.md` §219 forbids them only *outside*
+# `runtime/`. An earlier version of rule (c) barred them everywhere, which would
+# have gone red on the first line of the real runtime; review caught it against
+# `design.md` before `runtime/` existed to trip it.
+#
+# What `runtime/` has no reason to name is a database crate, and that is the hazard
+# #34 found: a `quote!` in `verum-macros` hard-coding `sqlx::FromRow` makes every
+# user require sqlx, invisibly — it appears in no manifest and never reaches
+# `cargo public-api`, because generated tokens are not part of `verum`'s rendered
+# API. So rule (c) is scoped to the database family alone.
+#
+# Derived, not hand-copied: an earlier version duplicated `FORBIDDEN_ROOTS` minus
+# axum by hand, so adding a crate to one list silently left rule (c) not covering
+# it. That is RK-016's rule 7 — derive the target names from the declaring side.
+readonly DB_ROOTS=(sqlx sqlx_core sqlx_postgres sqlx_macros sqlx_sqlite)
+
 readonly SCAN_ROOT="${VERUM_SCAN_ROOT:-crates}"
 readonly RUNTIME_DIR="$SCAN_ROOT/verum/src/runtime"
 
@@ -96,8 +111,19 @@ fail() {
 }
 
 check_imports() {
-  local axum_re reexport_re file body hits status=0 scanned=0
-  axum_re="(^|[^A-Za-z0-9_])($(alternation "${AXUM_ROOTS[@]}"))::"
+  local axum_re db_re reexport_re file body hits status=0 scanned=0
+  # Rule (a) covers everything `runtime/` is allowed to name — axum AND the crates
+  # `design.md` §219 forbids "outside `runtime/`" (tower, hyper_util, …). Before
+  # this, (a) was axum-only, so `tower::` in `lib.rs` passed both rules; review
+  # found the gap while checking that (c) had not over-reached the other way.
+  mapfile -t RUNTIME_ONLY < <(
+    comm -23 <(printf '%s\n' "${FORBIDDEN_ROOTS[@]}" | sort) \
+             <(printf '%s\n' "${DB_ROOTS[@]}" | sort)
+  )
+  axum_re="(^|[^A-Za-z0-9_])($(alternation "${RUNTIME_ONLY[@]}"))::"
+  # Everything forbidden that is NOT axum. `runtime/` has a documented reason to
+  # name axum and none to name sqlx, so the two get different rules — see (c).
+  db_re="(^|[^A-Za-z0-9_])($(alternation "${DB_ROOTS[@]}"))::"
   # `(::)?` matters: `pub use ::axum::Router;` is ordinary Rust, not obfuscation,
   # and inside runtime/ rule (a) permits axum — so without it that line passes
   # both rules.
@@ -107,18 +133,33 @@ check_imports() {
     scanned=$((scanned + 1))
     body=$(strip_comments "$file")
 
-    # (a) The axum family may only be named inside runtime/.
+    # (a) The runtime-only families may be named only inside runtime/.
     case "$file" in
       "$RUNTIME_DIR"/*) ;;
       *)
         hits=$(printf '%s\n' "$body" | grep -nE "$axum_re" || true)
         if [ -n "$hits" ]; then
-          fail "error: axum named outside ${RUNTIME_DIR}/ — $file"
+          fail "error: a runtime-only crate named outside ${RUNTIME_DIR}/ — $file"
           printf '%s\n' "$hits" | sed "s|^|    $file:|" >&2
           status=1
         fi
         ;;
     esac
+
+    # (c) The rest of the forbidden list may not be named ANYWHERE in `crates/`,
+    # runtime/ included. This is what catches `verum-macros` hard-coding
+    # `sqlx::FromRow` into a `quote!`: the pass-through form decided in #34
+    # forwards a path the *user* wrote, so a `sqlx` literal in Verum's own source
+    # means Verum is requiring the dependency rather than carrying it. That never
+    # reaches `cargo public-api`, because generated tokens are not part of
+    # `verum`'s rendered API — measured in #34, and the reason this rule is here
+    # rather than in check_public_api.
+    hits=$(printf '%s\n' "$body" | grep -nE "$db_re" || true)
+    if [ -n "$hits" ]; then
+      fail "error: a database crate is named in Verum's own source — $file"
+      printf '%s\n' "$hits" | sed "s|^|    $file:|" >&2
+      status=1
+    fi
 
     # (b) A forbidden crate may never be re-exported — including from runtime/.
     # Without this, runtime/ re-exports and lib.rs re-exports that, and the leak

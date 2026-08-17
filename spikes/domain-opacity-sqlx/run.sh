@@ -187,6 +187,32 @@ probe P16 fail 'E0428' check -p app --features p16-derive-newtype
 # Control: the same macro emitting only the Repr. Without this, P16's failure could
 # just mean the macro in this spike is broken.
 probe P17 pass 'Finished' check -p app --features p17-derive-repr-only
+
+# --- WHICH MACRO FORM CAN BUILD ADR-0010's SHAPE? (#34) ---------------------
+# P16 shows a derive cannot emit a SIBLING named after its input. ADR-0010's shape
+# puts the struct inside a module, so the question had to be asked again. P38: the
+# **re-export** collides, against the user's own item, which a derive cannot remove.
+probe P38 fail 'E0255' check -p app --features p38-adr0010-from-derive
+# P38's control, and the form #34 chose. The probe body references the expansion —
+# review mutated the macro to emit NOTHING and an earlier version of this row stayed
+# green, because a bare struct definition names none of the generated items.
+probe P39 pass 'Finished' check -p app --features p39-adr0010-from-attribute
+# ADR-0010's wall: the constructor is unreachable from outside the macro's module.
+probe P39b fail 'E0624' check -p app --features p39b-attribute-forgery
+# And the `Repr` is not nameable either — ADR-0010 marks it "module-private: paths
+# 3/4 shut with it". Review found this row missing, and found that its absence had
+# let the macro re-export the Repr AND expose `pub fn build(r: Repr)`, which together
+# forged a domain from invented values, from a foreign crate included.
+probe P39d fail 'E0422' check -p app --features p39d-repr-not-nameable
+# P39b/P39d's counter-evidence: the generated repository still works (ARK-002).
+probe P39c pass 'Finished' check -p app --features p39c-legitimate-route
+#
+# P40 — THE REFUTATION OF ADR-0011's FIRST MECHANISM.
+# A derive CAN own the confinement radius: emit only the `impl` block into the
+# module, and a private inherent method's visibility is the module the `impl` sits
+# in. No re-export, nothing collides. So "a derive cannot produce it" was false.
+probe P40 pass 'Finished' check -p app --features p40-derive-can-confine
+probe P40a fail 'E0624' check -p app --features p40a-derive-confine-forgery
 # And the signature does not force the newtype either — owning a cached Repr works.
 probe P19 pass 'Finished' check -p app --features p19-flat-cached-repr
 echo
@@ -258,6 +284,15 @@ probe P8 pass 'test result: ok. 2 passed' test -p app --features p2-from-repr --
 # through the repository the derive emits beside it.
 probe P28 pass 'VERUM_P28_LOADED=alice@example.com' test -p app --test confined -- --nocapture
 echo
+
+# The deleted-row guard. This spike predates it (#43's lesson, re-planted in
+# #48): without it, removing a `probe` line leaves the suite green with one less
+# thing measured.
+EXPECTED_ROWS=44
+if [[ $((pass + fail)) -ne $EXPECTED_ROWS ]]; then
+    printf 'FATAL: %d rows ran, expected %d — a probe line was removed.\n' "$((pass + fail))" "$EXPECTED_ROWS" >&2
+    exit 1
+fi
 
 printf 'result: %d as specified, %d unexpected\n' "$pass" "$fail"
 if [[ $fail -ne 0 ]]; then

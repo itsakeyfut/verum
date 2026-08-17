@@ -70,7 +70,10 @@ ctx.users().set_email(&mut user, req.email)?;   // ✅
 user.email = req.email;                          // ❌ private field
 ```
 
-**With a domain that has `pub` fields this rule is meaningless.** The derive
+**Under `#[domain]` a domain cannot have `pub` fields** — the attribute consumes
+them and emits a private inner field, so this rule's precondition is the emitted
+shape rather than the check ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)).
+Historically the macro
 rejecting `pub` is Rule 1's precondition.
 
 ### The exception on the read side (unresolved)

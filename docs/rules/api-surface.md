@@ -101,7 +101,23 @@ Four consequences follow.
 4. `http::` and `http_body::` are permitted by being absent from the deny list.
    No allow-list mechanism is needed.
 
-The grep side has two rules.
+The grep side has **three** rules:
+
+* **(a)** the runtime-only crates — the axum family, plus `tower` / `hyper` /
+  `hyper_util` / `matchit`, which `design.md` §219 forbids *outside* `runtime/` —
+  may be named only inside `crates/verum/src/runtime/`.
+* **(b)** no forbidden crate may be re-exported, from anywhere, `runtime/`
+  included.
+* **(c)** a **database** crate may not be named anywhere in `crates/`,
+  `runtime/` included. This is the one that catches a macro hard-coding
+  `sqlx::FromRow` into a `quote!`: that makes every user require sqlx while
+  appearing in no manifest, and it never reaches `cargo public-api`, because
+  generated tokens are not part of `verum`'s rendered API (#34).
+
+The (a)/(c) split is why `runtime/` keeps its exemption for its own dependencies
+but not for a database crate, which it has no reason to name. Both lists are
+derived from `FORBIDDEN_ROOTS` rather than hand-copied — an earlier version
+duplicated it, so adding a crate to one list left the other silently uncovered.
 
 - **(a)** Naming anything in the `axum` family outside
   `crates/verum/src/runtime/` is forbidden ([design.md](./design.md) §2, the
@@ -685,12 +701,12 @@ Both mitigations are implemented.
 // 1. provide verum::prelude
 pub mod prelude {
     pub use crate::{Ctx, Endpoint, Handler, Result};
-    pub use verum_macros::{contract, endpoint, Domain, Event, Request, View};
+    pub use verum_macros::{contract, endpoint, domain, Event, Request, View};
     pub use http::{Method, StatusCode};
 }
 
-// 2. the derive emits a `pub use` for the extension traits
-// #[derive(Domain)] on User generates:
+// 2. the macro emits a `pub use` for the extension traits
+// #[domain] on User generates:
 //   pub use self::__verum_user_ext::{CtxUsers, UserRepo};
 ```
 

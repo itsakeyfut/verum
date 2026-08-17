@@ -7,4 +7,4 @@
 //! # Status
 //!
 //! No macros are defined yet. `#[endpoint]`, `#[contract]`, and
-//! `#[derive(Domain)]` arrive in Phase 2.
+//! `#[domain]` arrive in Phase 2.

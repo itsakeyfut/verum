@@ -91,7 +91,7 @@ Banning `println!` **does not close the route where a domain value ends up in a
 `tracing::info!` field.** That is ledger path 4 — data leaking through `Debug` or
 `Serialize`
 ([`../specs/unverified-boundaries.md`](../specs/unverified-boundaries.md)) — and
-it stays open until `#[derive(Domain)]` generates a `Debug` that prints declared
+it stays open until `#[domain]` generates a `Debug` that prints declared
 fields only. "Do not log user data", below, is **a rule, not an enforcement**.
 
 ---

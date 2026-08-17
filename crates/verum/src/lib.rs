@@ -38,7 +38,7 @@ pub use typelevel::{Append, ConsList, Has, Here, Index, Lookup, There};
 // first macro in T-M2-01, in the named form required by
 // docs/rules/proc-macro.md §7:
 //
-//     pub use verum_macros::{contract, endpoint, Domain, ...};
+//     pub use verum_macros::{contract, endpoint, domain, ...};
 //
 // Do not restore a glob re-export. An empty `pub use verum_macros::*;` is
 // unreachable, so `unreachable_pub` rejects it and it can only be kept alive by

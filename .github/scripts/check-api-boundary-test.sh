@@ -77,6 +77,26 @@ reset_fixtures
 write_fixture "verum-macros/src/lib.rs" "use axum::Router;"
 expect expect-fail "the boundary covers every crate, not only verum"
 
+# Rule (c) — the #34 hazard. `verum-macros` naming a database crate inside a
+# `quote!` makes every user require it, invisibly: it appears in no manifest and
+# never reaches `cargo public-api`, because generated tokens are not part of
+# `verum`'s rendered API. Without this fixture, deleting rule (c) left the suite at
+# 11/11 green — measured in #34's review.
+reset_fixtures
+write_fixture "verum-macros/src/lib.rs" 'fn f() { quote::quote! { #[derive(sqlx::FromRow)] }; }'
+expect expect-fail "a database crate hard-coded into generated tokens (rule (c))"
+
+# Rule (c) has no runtime/ exemption: a database crate is wrong there too.
+reset_fixtures
+write_fixture "verum/src/runtime/mod.rs" "pub fn f() { let _: Option<sqlx::Error> = None; }"
+expect expect-fail "a database crate inside runtime/ (rule (c) is not exempted there)"
+
+# Rule (a) covers every runtime-only crate, not just axum. `design.md` §219 forbids
+# tower and hyper_util outside runtime/, and rule (a) used to be axum-only.
+reset_fixtures
+write_fixture "verum/src/lib.rs" "pub fn f<S: tower::Service<()>>(_s: S) {}"
+expect expect-fail "tower named outside runtime/ (design.md §219)"
+
 rm -rf "$TMP/crates"
 expect expect-fail "empty scan (regression: reported success without checking)"
 
@@ -97,6 +117,17 @@ expect expect-pass "local re-export inside runtime/"
 reset_fixtures
 write_fixture "verum/src/runtime/mod.rs" "pub(crate) use axum::Router;"
 expect expect-pass "pub(crate) use is not public"
+
+# The other half of rule (a): `runtime/` legitimately names its own dependencies.
+# An earlier version of rule (c) barred these, which would have gone red on the
+# first line of the real runtime.
+reset_fixtures
+write_fixture "verum/src/runtime/mod.rs" "pub fn f<S: tower::Service<()>>(_s: S) {}"
+expect expect-pass "tower inside runtime/ (design.md lists it as a dependency)"
+
+reset_fixtures
+write_fixture "verum/src/runtime/mod.rs" "pub fn f() { let _ = hyper_util::rt::TokioIo::new(0); }"
+expect expect-pass "hyper_util inside runtime/ (Phase 12's destination)"
 
 reset_fixtures
 write_fixture "verum/src/lib.rs" "pub use http::{HeaderMap, StatusCode};"

@@ -18,6 +18,13 @@ tokio.workspace = true
 # One feature per probe, all off by default, so the default build is the design
 # as the specs describe it and each probe is named in run.sh's output.
 [features]
+p38-adr0010-from-derive = []
+p39-adr0010-from-attribute = []
+p39b-attribute-forgery = ["p39-adr0010-from-attribute"]
+p39c-legitimate-route = ["p39-adr0010-from-attribute"]
+p39d-repr-not-nameable = ["p39-adr0010-from-attribute"]
+p40-derive-can-confine = []
+p40a-derive-confine-forgery = ["p40-derive-can-confine"]
 p2-from-repr = []
 p3-as-repr = []
 p4-direct-field = []

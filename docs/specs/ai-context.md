@@ -164,7 +164,7 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
         "permanent": false },
       { "kind": "service_body", "detail": "the observed_effects scan is neither complete nor sound: it cannot leave its own item, it matches receivers by spelling, and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
         "permanent": false },
-      { "kind": "domain_repr", "detail": "a domain's Repr and constructor are confined to a derive-owned private module (ADR-0010); this holds only while the conversion is an inherent method \u2014 on a public trait it is reachable from every crate (path 21)",
+      { "kind": "domain_repr", "detail": "a domain's Repr and constructor are confined to a macro-owned private module (ADR-0010); this holds only while the conversion is an inherent method \u2014 on a public trait it is reachable from every crate (path 21)",
         "location": "src/domain/user.rs", "permanent": false },
       { "kind": "malformed_set", "detail": "a malformed effect set can be passed through the capability check (path 14f)",
         "permanent": false },
