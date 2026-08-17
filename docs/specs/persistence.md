@@ -70,7 +70,8 @@ pub(crate) struct UserRepr {
     pub id:    UserId,      // pub is required: query_as! expands to a struct literal at the call site
     pub name:  String,
     pub email: Email,
-    // Do not derive Debug / Clone / Serialize — ledger paths 3 / 4 come back through Repr
+    // Any derive here is a construction route (Debug -> ledger path 4, Clone -> path 3).
+    // The general form: ../rules/api-surface.md §8
 }
 
 // The domain must own a borrowable Repr (a newtype is one way to do that)
@@ -142,7 +143,7 @@ neither sqlx nor the type enforcement, but `Repr` as a sideways bypass.
 | Constraint | If violated |
 |---|---|
 | Do not make `Repr`'s fields **fully private** | `query_as!` expands to a struct literal at the call site, so `E0451` (`pub(crate)` is enough within the crate) |
-| Do not derive `Debug` / `Clone` / `Serialize` / `Deserialize` on `Repr` | Ledger paths 4 / 3 come back through `Repr` (**from inside the same crate**; in the specified shape an external crate cannot reach `as_repr` — `E0624`) |
+| **Any** derive on `Repr` is a construction route — [`../rules/api-surface.md`](../rules/api-surface.md) §8 | `Debug` (ledger path 4) and `Clone` (path 3) are the cases in point: both come back through `Repr` (**from inside the same crate**; in the specified shape an external crate cannot reach `as_repr` — `E0624`). §8 holds the general form and the two measured instances — P15 (`sqlx::FromRow`) and P41 (`serde::Deserialize`) |
 | The domain's inner field is private (not `pub(crate)`) | `u.0.email = v` compiles from anywhere in the crate |
 | The domain **owns** a borrowable `Repr` | An `as_repr` returning a temporary is `E0515`. **A newtype is one way to satisfy this, not a requirement** |
 
@@ -195,10 +196,15 @@ ADR; the outcomes are:
 | **A sealed token** | **Not a boundary** (retracted; this was previously written here as "the only surviving candidate"). A token can only be passed **as an argument to a trait the user implements**, so a handler writing a three-line `impl Repository` receives the token from verum (measured). By value it cannot express a multi-row load (`E0382`) and forces `Copy`, and once `Copy` it can be stashed in a static |
 | Hand-write `FromRow` / abandon opacity | **Not measured** |
 
-The general form is: **any derive-produced constructor that assembles the struct
-inside the defining module is a forging route** — `FromRow`, `Deserialize`, and
-any future derive. `E0451` closes one syntactic form only, and **opening `Repr`
-enough to be usable opens it enough to be forgeable.**
+The general form is stated once, in
+[`../rules/api-surface.md`](../rules/api-surface.md) §8, with both measured
+instances — P15 (`FromRow`) and P41 (`Deserialize`).
+
+What this section adds, and what §8 does not cover because it is specific to
+persistence: `E0451` closes one syntactic form only, and **opening `Repr` enough
+to be usable by `query_as!` opens it enough to be forgeable.** That is the tension
+this spike was run to measure, and it is why the answer had to come from the
+`Repr`'s *reachability* rather than its field visibility.
 
 #### How path 21 is closed (#33, measured — ADR-0010)
 

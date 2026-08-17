@@ -85,6 +85,7 @@ Recorded as [ADR-0010](../../docs/adr/0010-domain-constructor-confined-by-module
 | P11 | …and forges with a struct **literal** | fail | `E0451` |
 | P12 | …and tries `query_as!` | fail | `E0451` |
 | P15 | …and forges from literal `SELECT` columns instead | pass | pass |
+| P41 | …and forges from a **JSON string** via `Deserialize`, no database at all | pass | pass |
 | P14 | `Repr` `pub` in a **private module** + the trait: foreign crate uses projection | pass | pass |
 | P20 | `Debug` / `Clone` derived on the `Repr` | pass | pass |
 | P16 | a derive emitting `pub struct User(UserRepr)` — same name as its input | fail | `E0428` |
@@ -161,9 +162,12 @@ and P28 had the same defect and now carry pins or a value-bearing needle.
   private** fields fail. `pub(crate)` fields are enough for the in-crate case.
 - **P9** — a public trait's associated type cannot be bound to a crate-private type.
   That is all; it does not foreclose anything else.
-- **P10 / P11 / P12 / P15** — "`Repr` public, fields private" can load, rejects a
-  struct literal, loses `query_as!`, and **is forged anyway** from a row the caller
-  supplies.
+- **P10 / P11 / P12 / P15 / P41** — "`Repr` public, fields private" can load, rejects
+  a struct literal, loses `query_as!`, and **is forged anyway** from a row the caller
+  supplies. P41 (added by #35) shows the same route through `serde::Deserialize`,
+  which needs no database at all — a string literal is the whole attack. Field
+  privacy is not the lever; the type's *name* is. The general form is
+  `docs/rules/api-surface.md` §8.
 - **P14** — a `pub` `Repr` in a private module plus the trait lets a foreign crate
   denote it by projection, read every field, and forge.
 - **P20** — a `Debug` / `Clone` on the `Repr` lets **handler code in the same crate**
