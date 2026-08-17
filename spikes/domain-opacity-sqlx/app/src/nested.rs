@@ -83,17 +83,12 @@ mod __verum_account {
     pub struct AccountRepository;
 
     impl AccountRepository {
-        pub async fn find(
-            &self,
-            pool: &sqlx::SqlitePool,
-            id: i64,
-        ) -> Result<Account, sqlx::Error> {
-            let r = sqlx::query_as::<_, AccountRepr>(
-                "SELECT id, name, email FROM users WHERE id = ?",
-            )
-            .bind(id)
-            .fetch_one(pool)
-            .await?;
+        pub async fn find(&self, pool: &sqlx::SqlitePool, id: i64) -> Result<Account, sqlx::Error> {
+            let r =
+                sqlx::query_as::<_, AccountRepr>("SELECT id, name, email FROM users WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await?;
             Ok(Account::from_repr(r))
         }
 

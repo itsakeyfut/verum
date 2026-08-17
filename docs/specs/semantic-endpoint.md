@@ -249,7 +249,7 @@ carries the capabilities. The implementation conventions are in
 ### The domain definition
 
 ```rust,ignore   // needs a macro that arrives in M2
-#[derive(Domain)]
+#[domain]
 pub struct User {
     id:            UserId,      // private is required (pub is a derive error)
     name:          String,
@@ -271,8 +271,11 @@ the declared fields.
 > attribute macro is **undecided** (a derive cannot add an item with the same name
 > as its input). See [`persistence.md`](./persistence.md) §Verdict.
 
-**Making a field `pub` voids the whole contract via `user.email = v`.** The
-reasoning is in [`mutation-contract.md`](./mutation-contract.md).
+**Under `#[domain]` a field cannot be `pub`** — the attribute consumes the user's
+`pub` and emits a private inner field, so `user.email = v` cannot compile whether
+or not the macro's check runs. The check is a **lint**
+([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)); the reasoning is in
+[`mutation-contract.md`](./mutation-contract.md).
 
 ### GET
 

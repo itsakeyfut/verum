@@ -3,8 +3,8 @@
 //! common shape, and it is the shape under which `pub(crate)` is widest.
 pub mod confined;
 pub mod domain;
-pub mod nested;
 pub mod handler;
+pub mod nested;
 pub mod repo;
 
 // ---------------------------------------------------------------------------
@@ -67,3 +67,119 @@ mod __verum_rootuser {
 
 #[cfg(feature = "p32-root-nested")]
 pub use __verum_rootuser::{RootNested, RootNestedRepository};
+
+// ---------------------------------------------------------------------------
+// WHICH MACRO FORM CAN PRODUCE ADR-0010's SHAPE? (#34)
+//
+// ADR-0010 chose "the constructor lives in a macro-owned module". Its text calls
+// that module "derive-owned" throughout, which had never been compiled.
+//
+// REVIEW CORRECTED THE ANSWER'S REASON, NOT THE ANSWER.
+//   P38 shows a derive cannot emit the shape *as ADR-0010 writes it*, because the
+//   re-export collides with the user's own item. But P40 shows a derive CAN own the
+//   confinement radius — emit only the `impl` block into the module and no
+//   re-export is needed. What a derive cannot do is **consume the user's item**, so
+//   the transparent original survives beside the opaque one: P40b. That is the real
+//   reason the attribute form wins, and it is a *cost*, not an impossibility.
+// ---------------------------------------------------------------------------
+
+/// P38 — ADR-0010's shape, verbatim, from a derive. Expected to **fail**, `E0255`.
+#[cfg(feature = "p38-adr0010-from-derive")]
+#[derive(mac::DomainAdr0010Derive)]
+pub struct Adr0010Derive {
+    pub email: String,
+}
+
+/// P39 — the same from an attribute. Expected to **compile**.
+///
+/// The body below is what stops this being a hollow row: review mutated the macro
+/// to emit **nothing** and P39 stayed green, because a bare struct definition
+/// references none of the generated items. Naming `Adr0010AttrRepository` and the
+/// getter makes an empty expansion `E0433`/`E0599`.
+#[cfg(feature = "p39-adr0010-from-attribute")]
+#[mac::domain_attr]
+pub struct Adr0010Attr {
+    pub email: String,
+}
+
+#[cfg(feature = "p39-adr0010-from-attribute")]
+pub fn p39_uses_the_expansion() -> String {
+    Adr0010AttrRepository
+        .load("db@example.com")
+        .email()
+        .to_owned()
+}
+
+/// P39b — the forgery ADR-0010 exists to reject. Expected to **fail**, `E0624`.
+#[cfg(feature = "p39b-attribute-forgery")]
+pub fn p39b_forge() -> Adr0010Attr {
+    Adr0010Attr::from_repr(todo!())
+}
+
+/// P39d — **the `Repr` is not nameable from outside**, by its *visibility*.
+/// Expected to **fail**, `E0603`.
+///
+/// This row is **path-qualified on purpose.** The first version wrote the
+/// unqualified name and got `E0422`, which only measures "the Repr was left out of
+/// the re-export list" — it stayed green while the macro emitted
+/// `pub(super) struct Repr`, i.e. a Repr reachable from anywhere in the user's
+/// crate. Review mutation-verified that blindness. Naming the module path makes the
+/// visibility itself the thing under test.
+#[cfg(feature = "p39d-repr-not-nameable")]
+pub fn p39d_name_the_repr() {
+    let _ = crate::__verum_adr0010_attr::Adr0010AttrRepr {
+        email: String::new(),
+    };
+}
+
+/// P39e — the same from **another module of the user's crate**, which is where
+/// `pub(super)` was reachable. Expected to **fail**, `E0603`.
+///
+/// P33's lesson transposed onto the `Repr`: at the crate root `pub(super)` *is*
+/// `pub(crate)`, so a row that only looks from the declaring scope cannot see it.
+#[cfg(feature = "p39e-repr-not-nameable-elsewhere")]
+pub mod p39e_elsewhere {
+    pub fn touch() {
+        let _ = crate::__verum_adr0010_attr::Adr0010AttrRepr {
+            email: String::new(),
+        };
+    }
+}
+
+/// P39c — the legitimate route, so P39b/P39d are not passing because the module is
+/// unreachable. Expected to **compile**, and it has its own feature so it can be a
+/// `pass` row (review: it previously shared P39b's failing build and could not be
+/// one).
+#[cfg(feature = "p39c-legitimate-route")]
+pub fn p39c_legitimate() -> String {
+    Adr0010AttrRepository
+        .load("alice@example.com")
+        .email()
+        .to_owned()
+}
+
+/// P40 — **a derive CAN own the confinement radius.** Expected to **compile**.
+///
+/// Emit only the `impl` block into the generated module: a private inherent
+/// method's visibility is the module the `impl` is written in, not where the type is
+/// defined. No re-export, so nothing collides. This refutes "a derive cannot
+/// produce it".
+#[cfg(feature = "p40-derive-can-confine")]
+#[derive(mac::DomainImplOnlyDerive)]
+pub struct ImplOnly {
+    pub email: String,
+}
+
+/// P40a — and the wall still stands under it. Expected to **fail**, `E0624`.
+#[cfg(feature = "p40a-derive-confine-forgery")]
+pub fn p40a_forge() -> ImplOnly {
+    ImplOnly::from_repr(todo!())
+}
+
+/// P40b — **the cost, and the real reason the attribute form wins.** Expected to
+/// **compile**, which is the finding: a derive cannot consume the user's item, so
+/// the transparent original survives and its `pub` fields are assignable.
+#[cfg(feature = "p40-derive-can-confine")]
+pub fn p40b_transparent_original(u: &mut ImplOnly) {
+    u.email = String::from("assigned directly — no capability");
+}

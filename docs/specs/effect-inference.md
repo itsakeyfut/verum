@@ -305,7 +305,7 @@ DB                        → out of scope
 
 > **⚠️ The first line above did not hold as originally measured** (T-M1-01 / #13),
 > and now holds conditionally (#33 / ADR-0010). With the `Repr`, the constructor and
-> the repository emitted into a **derive-owned private module**, endpoint and service
+> the repository emitted into a **macro-owned private module**, endpoint and service
 > code can no longer forge a domain (`E0624`, P31) — but only while the conversion
 > stays an *inherent* method; on a public trait ledger **path 21** reopens from every
 > crate (P36). Detail in [`persistence.md`](./persistence.md) §Verdict.

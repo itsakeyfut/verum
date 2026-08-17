@@ -101,11 +101,32 @@ Four consequences follow.
 4. `http::` and `http_body::` are permitted by being absent from the deny list.
    No allow-list mechanism is needed.
 
-The grep side has two rules.
+The grep side has **three** rules:
 
-- **(a)** Naming anything in the `axum` family outside
-  `crates/verum/src/runtime/` is forbidden ([design.md](./design.md) §2, the
-  module boundary).
+* **(a)** the runtime-only crates — the axum family, plus `tower` / `hyper` /
+  `hyper_util` / `matchit`, which `design.md` §219 forbids *outside* `runtime/` —
+  may be named only inside `crates/verum/src/runtime/`.
+* **(b)** no forbidden crate may be re-exported, from anywhere, `runtime/`
+  included.
+* **(c)** a **database** crate may not be named anywhere in `crates/`,
+  `runtime/` included. This is the one that catches a macro hard-coding
+  `sqlx::FromRow` into a `quote!`: that makes every user require sqlx while
+  appearing in no manifest, and it never reaches `cargo public-api`, because
+  generated tokens are not part of `verum`'s rendered API (#34).
+
+The (a)/(c) split is why `runtime/` keeps its exemption for its own dependencies
+but not for a database crate, which it has no reason to name. The **permissive** set (`RUNTIME_ONLY`) is written out and the strict one is
+derived as its complement. That direction is deliberate: derived the other way
+round, a crate added to `FORBIDDEN_ROOTS` alone became silently *exempt* inside
+`runtime/`. A cardinality assertion pins the subset relation, so a failing
+`comm` cannot leave the vocabulary empty.
+
+- **(a)** Naming any **runtime-only** crate outside `crates/verum/src/runtime/` is
+  forbidden — the axum family plus `tower` / `hyper` / `hyper_util` / `matchit`,
+  which [design.md](./design.md) §219 forbids only *outside* `runtime/`. The set
+  is written out in the script as `RUNTIME_ONLY`; rule (c)'s set is derived as its
+  complement, so a crate added to `FORBIDDEN_ROOTS` alone defaults to barred
+  everywhere rather than exempt inside `runtime/`.
 - **(b)** A `pub use` of a forbidden crate is forbidden **everywhere, including
   inside `runtime/`**, and that includes a leading `::`
   (`pub use ::axum::Router;`). Without this, "re-export in `runtime/`, re-export
@@ -155,7 +176,7 @@ This section rests on two grounds, and only one of them lapses.
 | The `public-api` mode and the guard's own tests | Structurally unchanged; only crate names in the list and the fixtures |
 
 > **Careful**: the script's header says "the check that buys the freedom to drop
-> Axum later" and the variable is called `AXUM_ROOTS`. Phase 12's task is named
+> Axum later" and the variable is called `RUNTIME_ONLY`. Phase 12's task is named
 > "remove Axum", so **there is a real risk of mistaking this for cleanup and
 > deleting it wholesale.** Deleting it fails nothing, and the guard for capability
 > completeness quietly disappears. The same note is at the top of the script.
@@ -685,12 +706,12 @@ Both mitigations are implemented.
 // 1. provide verum::prelude
 pub mod prelude {
     pub use crate::{Ctx, Endpoint, Handler, Result};
-    pub use verum_macros::{contract, endpoint, Domain, Event, Request, View};
+    pub use verum_macros::{contract, endpoint, domain, Event, Request, View};
     pub use http::{Method, StatusCode};
 }
 
-// 2. the derive emits a `pub use` for the extension traits
-// #[derive(Domain)] on User generates:
+// 2. the macro emits a `pub use` for the extension traits
+// #[domain] on User generates:
 //   pub use self::__verum_user_ext::{CtxUsers, UserRepo};
 ```
 

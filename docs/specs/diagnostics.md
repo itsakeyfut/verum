@@ -91,11 +91,14 @@ error: Domain fields must be private
  4 |     pub email: Email,
    |     ^^^ remove `pub` — access is granted through the contract
    |
-   = note: `#[derive(Domain)]` generates capability-checked accessors
+   = note: `#[domain]` generates capability-checked accessors
    = help: if this field must be public, it does not belong in a Domain
 ```
 
-A `pub` field is the one route that voids the entire contract, so the macro
+A `pub` field is rejected, but under `#[domain]` that is **a lint, not the guarantee**
+([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)) — the attribute emits a
+private inner field, so `user.email = v` fails whether or not the check runs
+(`E0615` with a getter present, `E0616` for `u.0.email`). The macro
 always rejects it ([`mutation-contract.md`](./mutation-contract.md)).
 
 ### A GET that declares mutations
@@ -311,7 +314,7 @@ five; the count is dropped rather than maintained.)
 | `implementation of AsyncFnOnce is not general enough` | a higher-ranked `Ctx` in an `Fn`-trait position (T-M1-02 / #14) | [`conditional-effects.md`](./conditional-effects.md) |
 | `E0282` — type annotations needed | `\|ctx\| async move { .. }` where the returned future borrows the argument; `async \|ctx\| { .. }` compiles (T-M1-07 / #37) | [`handler-rules.md`](./handler-rules.md) Rule 4 |
 | `E0407` — method is not a member of trait | a helper placed beside `handle` in the observed `impl` block (T-M1-07 / #37) | [`unverified-boundaries.md`](./unverified-boundaries.md) path 22 |
-| `E0624` / `E0603` — associated function / struct is private | building a domain from its `Repr` outside the derive-owned module (#33 / [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | [`persistence.md`](./persistence.md), [`unverified-boundaries.md`](./unverified-boundaries.md) path 21 |
+| `E0624` / `E0603` — associated function / struct is private | building a domain from its `Repr` outside the macro-owned module (#33 / [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | [`persistence.md`](./persistence.md), [`unverified-boundaries.md`](./unverified-boundaries.md) path 21 |
 
 **Two of these have no trait-bound alternative.** The pattern above — "name the
 bound that *would* let Verum own the wording" — does not apply to `E0407`: "put
@@ -333,7 +336,7 @@ risks rather than recorded costs:**
 1. `rustc --explain E0624` names both bypasses by number — *"1. Only use the item
    in the scope it has been defined"* and *"2. Make the item public"*. The first is
    the residue ADR-0010's option D left open; under the chosen option the module is
-   derive-owned, so it is unavailable to the user, but the text still points that way.
+   macro-owned, so it is unavailable to the user, but the text still points that way.
 2. The error emits **no pointer to the generated repository**, and its only
    navigational span is into the generated module. So the checked alternative
    ARK-002 requires exists but is **not discoverable from the failure**.

@@ -54,7 +54,7 @@ Closing routes individually is whack-a-mole. The causes reduce to three.
 | 3 | Escaping a projection with `into_owned()` | **Not provided** | **Closed in the First PoC.** ⚠️ Deriving `Clone` on `Repr` brings it back (see path 21) — **confined to the domain's own module** once the `Repr` carries no visibility modifier either (P30, ADR-0010) |
 | 4 | A data leak through `Debug` / `Serialize` | A custom implementation emitting declared fields only, derive-generated | **Closed in the First PoC.** ⚠️ The response is **imposed only on the domain side** — deriving `Debug` on `Repr` leaks from within the same crate (see path 21). **Confined to the domain's own module** once the `Repr` carries no visibility modifier: the name is unreachable, so there is no `Debug` to call (P30, ADR-0010) |
 | 5 | Mutation through interior mutability (`RefCell` / `Mutex` / `Cell`) | Restrict domain field types (a whitelist until `Freeze` stabilises) | **Closed in the First PoC** |
-| 21 | **`User::from_repr(UserRepr { .. })` / `as_repr()` reachable from anywhere in the domain's crate** | The derive emits the `Repr`, the constructor **and** the repository into a **derive-owned private module** and re-exports the domain from it (#33 / [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | **Closed** for all user-written code — handler, service, a helper beside the user's own declaration, the crate-root layout, the read half, and foreign crates are all `E0624` (P31/P32/P34/P35/P27). ⚠️ **Conditional**: closed only while the conversion stays an *inherent* method — on a public trait it reopens completely (P36). Measured in T-M1-01 / #13 and #33; below |
+| 21 | **`User::from_repr(UserRepr { .. })` / `as_repr()` reachable from anywhere in the domain's crate** | The derive emits the `Repr`, the constructor **and** the repository into a **macro-owned private module** and re-exports the domain from it (#33 / [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | **Closed** for all user-written code — handler, service, a helper beside the user's own declaration, the crate-root layout, the read half, and foreign crates are all `E0624` (P31/P32/P34/P35/P27). ⚠️ **Conditional**: closed only while the conversion stays an *inherent* method — on a public trait it reopens completely (P36). Measured in T-M1-01 / #13 and #33; below |
 
 > **Numbers are only ever appended, never renumbered.** Paths 12 / 13 / 14 are
 > referenced from [`../rules/api-surface.md`](../rules/api-surface.md),
@@ -64,7 +64,7 @@ Closing routes individually is whack-a-mole. The causes reduce to three.
 
 #### path 21 — `Repr` cannot be confined to "the repository implementation" as written, but can be confined to the domain's module (compile-verified)
 
-`#[derive(Domain)]` **expands in the user's crate**, so the visibility of the
+`#[domain]` **expands in the user's crate**, so the visibility of the
 generated `pub(crate) struct UserRepr` and `pub(crate) fn from_repr` / `as_repr`
 is **the whole application crate.** The derive cannot emit `pub(in ...)` because it
 does not know which module the repository is written in. That leaves two readings
@@ -77,7 +77,7 @@ at all.
 | The same crate as the domain (a single-crate application) | Any handler in the crate can write `User::from_repr(UserRepr { email: anything, .. })`. No capability, no repository, no SQL, no `unsafe` |
 | A separate crate | `Repr` is entirely invisible (`E0603`). The design does not function |
 | Generated into **the domain's own module** | **Not enough** (#33). Handlers are rejected (`E0624`, P26), but a helper beside the user's own `struct User` forges (P29), and if the domain sits at the **crate root** the module *is* the crate, so nothing is confined at all (P33) |
-| **Generated into a derive-owned private module** (#33, [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | **The one that holds.** The radius is chosen by the derive, not by the user's layout: P31, P32, P34, P35 and P27 are all `E0624`, while the generated repository inside still loads a real row (P28) |
+| **Generated into a macro-owned private module** (#33, [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | **The one that holds.** The radius is chosen by the derive, not by the user's layout: P31, P32, P34, P35 and P27 are all `E0624`, while the generated repository inside still loads a real row (P28) |
 
 **The `pub(in ...)` sentence above is true and does not imply what it was used to
 imply.** The derive does not need `pub(in ...)`; it needs *no modifier*, plus a
@@ -120,6 +120,17 @@ the same constraint already recorded for `E0615` / `E0609` below.
 A forged `User`'s getters were confirmed to work at run time (probe P8 of the
 spike). But **it was not compared against a loaded `User`**, so "indistinguishable"
 is an observation about getter behaviour.
+
+> **⚠️ No longer true under `#[domain]`** ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)).
+> The attribute expands into a module that is a **child** of the user's module, so a
+> helper written beside the declaration cannot reach the **constructor** —
+> `E0624`, measured. What it *can* still reach is the `Repr`, if the `Repr`
+> carries any visibility modifier; with none (as `#[domain]` emits, and as the
+> ledger states as paths 3/4's closing condition) that is `E0603` too.
+> An earlier version of this note said `E0616` and said the helper was outside
+> the radius outright: `E0616` is the *field* error (`u.0.email`), which is a
+> different measurement, and the unqualified claim was false for the `Repr`.
+> The residue described below is the **derive** form's.
 
 **Making the fields private does work, but the guarantee is "from outside the
 defining module", not a type boundary** (measured). From the defining module and
@@ -547,7 +558,7 @@ An unchecked boundary is **always** emitted in the AI Context.
       },
       {
         "kind": "domain_repr",
-        "detail": "a domain's Repr and constructor are confined to a derive-owned private module (ADR-0010); no user-written code can build one or read a field without a capability. This holds ONLY while the conversion is an inherent method \u2014 on a public trait it is reachable from every crate (path 21)",
+        "detail": "a domain's Repr and constructor are confined to a macro-owned private module (ADR-0010); no user-written code can build one or read a field without a capability. This holds ONLY while the conversion is an inherent method \u2014 on a public trait it is reachable from every crate (path 21)",
         "location": "src/domain/user.rs",
         "permanent": false
       },

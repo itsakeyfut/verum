@@ -278,7 +278,7 @@ dedup** — settled in T-M0-09;
 ## Field marker types
 
 ```rust,ignore   // needs a macro that arrives in M2
-#[derive(Domain)]
+#[domain]
 pub struct User {
     id:    UserId,      // private is required (pub is a derive error)
     email: Email,
