@@ -263,6 +263,44 @@ impl<'req, E: Endpoint> Ctx<'req, E> {
         tokio::spawn(async move { f(jctx).await })
     }
 
+    /// F4 — #40's third candidate: the handler hands over a **payload**, and the
+    /// framework builds the job's context inside the spawned task.
+    ///
+    /// The task owns a `Runtime` clone and `'job` is the borrow of it, so
+    /// `ScopedJobCtx` is **not** `'static` even though the spawned future is.
+    /// That is the same construction `serve.rs` uses for `'req`, one level down.
+    ///
+    /// Note what does and does not cross the boundary: a `Runtime` crosses (it is
+    /// not a capability — it is what a context is *built from*, and its
+    /// constructor is what ADR-0006 gates), while no capability-carrying value
+    /// does. The handler never names a `ScopedJobCtx`.
+    pub fn spawn_scoped<J: ScopedJob>(
+        &self,
+        payload: J::Payload,
+    ) -> tokio::task::JoinHandle<Result<()>> {
+        // ── THE ONE LINE THAT CARRIES THE GUARANTEE ──────────────────────────
+        // A **task-owned clone**, borrowed below. `'job` is bounded because of
+        // that and nothing else: `capability-system.md`'s note on `'req` says the
+        // same thing one level up — "the lifetime carries the guarantee only
+        // because of where the borrowed value lives".
+        //
+        // Measured in #40's review: replacing this with
+        //     let leaked: &'static Runtime = Box::leak(Box::new(self.rt.clone()));
+        // constructs a `ScopedJobCtx<'static, J>` and compiles with **zero
+        // errors**, after which F5's attack succeeds. **No probe detects that** —
+        // F5 measures whether the context *as constructed here* can be
+        // re-spawned, so it cannot see a differently-constructed one.
+        let owned: Runtime = self.rt.clone();
+        tokio::spawn(async move {
+            // `'job` starts here, as the borrow of a value this task owns.
+            let jctx = ScopedJobCtx {
+                rt: &owned,
+                _j: PhantomData,
+            };
+            J::run(jctx, payload).await
+        })
+    }
+
     /// F1 — the shape `capability-system.md:55` and `api-surface.md:525`
     /// promise: `ctx.spawn::<Job>(|jctx| async move { .. })` where the child
     /// receives a `Ctx` borrowing the parent.
@@ -424,6 +462,68 @@ pub struct JobCtx<J: Job> {
 impl<J: Job> JobCtx<J> {
     pub fn set_email(&self, id: u64, v: String) -> Result<()> {
         self.store
+            .lock()
+            .expect("store poisoned")
+            .entry(id)
+            .and_modify(|d| d.set_email_raw(v));
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #40 — the checked alternative, third shape.
+//
+// F1 (the specified shape) does not compile: a child `Ctx` borrowing the parent
+// cannot be `'static`. F2 compiles by handing the child an **owned** `JobCtx`,
+// and F3 is what that costs — the owned handle is `'static`, so a
+// capability-carrying value with no request bound exists, which is what `'req`
+// was introduced to rule out.
+//
+// This is the third option, and it comes from a mechanism the design already
+// uses one level up. `capability-system.md` records that `'req` is not handed in
+// by hyper: `serve.rs` clones the `Runtime` **into each request's own future**,
+// and `'req` is the borrow of that clone. The same move works inside a spawned
+// task: the task owns a clone, and `'job` is the borrow of it. Nothing
+// capability-carrying is ever `'static`, at either level.
+//
+// The handler therefore hands over a **payload**, never a context, and the
+// framework constructs the context on the far side — exactly as the erasure
+// layer already builds the `Ctx` on the far side of the boxing.
+// ---------------------------------------------------------------------------
+
+/// A job whose context is scoped, mirroring `Handler` rather than a closure.
+///
+/// **Named `ScopedJob` here, `Job` in the specs.** The spike keeps the older
+/// marker `Job` for probes F1–F3, so the two shapes can be measured side by side;
+/// `docs/specs/capability-system.md` and ADR-0012 call this one `Job` because by
+/// then there is only one. Same for `ScopedJobCtx` / `JobCtx`.
+///
+/// `run` is a trait method for the same reason `Handler::handle` is: a
+/// higher-ranked *closure* over a context is where the `when` scope kept hitting
+/// `not general enough` (D1 / D5), while the trait-method shape is measured to
+/// work.
+pub trait ScopedJob: Send + Sync + 'static {
+    type Payload: Send + 'static;
+
+    fn run(
+        ctx: ScopedJobCtx<'_, Self>,
+        payload: Self::Payload,
+    ) -> impl Future<Output = Result<()>> + Send;
+}
+
+/// The job's capability handle. **Not `'static`** — `'job` is the borrow of the
+/// `Runtime` clone the spawned task owns.
+pub struct ScopedJobCtx<'job, J: ScopedJob + ?Sized> {
+    rt: &'job Runtime,
+    _j: PhantomData<fn() -> J>,
+}
+
+impl<J: ScopedJob + ?Sized> ScopedJobCtx<'_, J> {
+    /// Stands in for the job's declared capabilities. A real one would be
+    /// gated on `J`'s declared set the way `Ctx`'s extension traits are.
+    pub fn set_email(&self, id: u64, v: String) -> Result<()> {
+        self.rt
+            .store
             .lock()
             .expect("store poisoned")
             .entry(id)

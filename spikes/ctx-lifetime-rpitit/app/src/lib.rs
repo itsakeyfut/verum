@@ -959,3 +959,118 @@ pub fn f3_respawn_jobctx<E: Endpoint>(
 
 const _: for<'a> fn(Ctx<'a, UpdateUser>, u64) -> tokio::task::JoinHandle<Result<()>> =
     f3_respawn_jobctx::<UpdateUser>;
+
+// ---------------------------------------------------------------------------
+// #40 — F4 / F5: the checked spawn alternative whose context is scoped.
+// ---------------------------------------------------------------------------
+
+/// The job. `run` is a trait method, so it is the `Handler` shape rather than the
+/// higher-ranked closure shape that D1/D5 measured as unworkable.
+pub struct ScopedSendEmailJob;
+
+impl fw::ScopedJob for ScopedSendEmailJob {
+    type Payload = (u64, String);
+
+    fn run(
+        ctx: fw::ScopedJobCtx<'_, Self>,
+        (id, to): Self::Payload,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move {
+            tokio::task::yield_now().await;
+            ctx.set_email(id, to)?;
+            Ok(())
+        }
+    }
+}
+
+/// F4 — the handler hands over a payload and returns. The job runs after.
+pub struct ScopedSpawnEndpoint;
+
+impl Endpoint for ScopedSpawnEndpoint {
+    type Reads = ();
+    type Mutates = ();
+}
+
+impl Handler for ScopedSpawnEndpoint {
+    type Req = Req;
+    type Res = String;
+
+    fn decode(body: &[u8]) -> Result<Req> {
+        UpdateUser::decode(body)
+    }
+
+    fn encode(res: String) -> Vec<u8> {
+        res.into_bytes()
+    }
+
+    fn handle<'req>(
+        &self,
+        req: Req,
+        ctx: Ctx<'req, Self>,
+    ) -> impl Future<Output = Result<String>> + Send {
+        async move {
+            // No context crosses the boundary — only the payload.
+            let _ = ctx.spawn_scoped::<ScopedSendEmailJob>((req.id, req.email.clone()));
+            Ok("accepted".to_owned())
+        }
+    }
+}
+
+/// F5 — the cost F2 pays, attempted against F4's shape.
+///
+/// F3 showed an **owned** `JobCtx` can be spawned onward without bound, because
+/// it is `'static`. Here the same attack is made from inside `ScopedJob::run`,
+/// where the context borrows the task's own `Runtime` clone.
+///
+/// Expected to **fail** (`E0521`): `'job` cannot satisfy `tokio::spawn`'s
+/// `'static`, which is the whole point — the guarantee "no capability-carrying
+/// value is `'static`" survives one level down instead of being re-derived.
+#[cfg(feature = "f5-scoped-job-respawn")]
+pub struct RespawnJob;
+
+#[cfg(feature = "f5-scoped-job-respawn")]
+impl fw::ScopedJob for RespawnJob {
+    type Payload = u64;
+
+    fn run(
+        ctx: fw::ScopedJobCtx<'_, Self>,
+        id: Self::Payload,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move {
+            tokio::spawn(async move {
+                let _ = ctx.set_email(id, "respawned@example.com".to_owned());
+            });
+            Ok(())
+        }
+    }
+}
+
+/// F6 — the control F4 needs: can a capability be smuggled through the payload?
+///
+/// `ScopedJob::Payload: Send + 'static`, and #39 made every capability handle
+/// non-`'static`. So the bound that makes the payload crossable is the same bound
+/// that keeps a handle out of it. Measuring rather than asserting, because the
+/// whole shape rests on it.
+///
+/// Expected to **fail**: a `RepoLt<'req, ..>` cannot satisfy `'static`.
+#[cfg(feature = "f6-payload-smuggles-capability")]
+pub struct SmuggleJob;
+
+#[cfg(feature = "f6-payload-smuggles-capability")]
+impl fw::ScopedJob for SmuggleJob {
+    type Payload = fw::RepoLt<'static, Domain, (), ()>;
+
+    fn run(
+        _ctx: fw::ScopedJobCtx<'_, Self>,
+        _repo: Self::Payload,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move { Ok(()) }
+    }
+}
+
+/// The handler side of F6 — this is where the `'static` obligation actually bites.
+#[cfg(feature = "f6-payload-smuggles-capability")]
+pub fn f6_smuggle_capability_through_payload(ctx: Ctx<'_, UpdateUser>) {
+    let repo = ctx.users_lt();
+    let _ = ctx.spawn_scoped::<SmuggleJob>(repo);
+}

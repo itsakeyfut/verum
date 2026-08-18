@@ -29,13 +29,14 @@ Format: [MADR 4.0](https://adr.github.io/madr/). Copy
 | [0009](./0009-observed-is-not-a-lower-bound.md) | `observed` is not a lower bound, and Q-A is reopened on the measurement | proposed | `spikes/contract-from-tokens/` — probes **V1** and **V2**, which a sound or complete scanner would turn red |
 | [0010](./0010-domain-constructor-confined-by-module-privacy.md) | The Domain constructor is confined to a macro-owned module, not to the user's | accepted | `spikes/domain-opacity-sqlx/run.sh` — **P31** (`E0624`), **P32** (crate root), **P34** (`as_repr`), **P35** (the `Repr`); P31 mutation-verified. **P33 / P36 are the counter-evidence rows and must pass** |
 | [0011](./0011-domain-is-an-attribute-macro.md) | The Domain macro is an attribute, `#[domain]`, not `#[derive(Domain)]` | accepted | `spikes/domain-opacity-sqlx/run.sh` — **P38** (`E0255`, a derive cannot emit ADR-0010's shape), **P39** (an attribute can), **P39b** (`E0624`, the confinement survives). Plus the widened `imports` guard, planted and confirmed red |
+| [0012](./0012-spawn-takes-a-payload-not-a-context.md) | `ctx.spawn` takes a **payload**, not a context | accepted | `spikes/ctx-lifetime-rpitit` F1–F6 — the specified shape is `E0521`, the owned form compiles but can be re-spawned, and the chosen form is `E0521` against both re-spawning and payload smuggling. ⚠️ No fixture in `crates/verum` yet — there is no `Ctx` there; relocated to #60 / `T-M3-02` |
 
 > **Statuses live in two places** — an ADR's frontmatter and this row. #34 updated
 > only the frontmatter and #39 repeated it, so before closing an ADR run
 > `command grep -n '<number>' docs/adr/README.md` and check the row, the
 > **By status** line, and any note below.
 
-**By status** — proposed: **0004, 0006, 0007, 0009** · accepted: 0000–0003, 0005, 0008, 0010, 0011 · superseded: none
+**By status** — proposed: **0004, 0006, 0007, 0009** · accepted: 0000–0003, 0005, 0008, 0010, 0011, 0012 · superseded: none
 
 > **Five `proposed` records, and the codebase relies on all five.** That is the
 > state [ADR-0000](./0000-record-architecture-decisions.md) calls a defect, made
