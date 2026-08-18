@@ -207,6 +207,11 @@ echo
 
 echo "=== #40 — ctx.spawn (measured, not decided) ==="
 probe F1 fail 'E0521'                                    check -p app --features f1-spec-spawn
+# F4/F5/F6 — the third shape: the handler passes a payload and the framework builds
+# the job's context inside the spawned task, borrowed from that task's own Runtime
+# clone. F5 and F6 are the controls that make F4 mean something.
+probe F5 fail 'E0521'                                    check -p app --features f5-scoped-job-respawn
+probe F6 fail 'E0521'                                    check -p app --features f6-payload-smuggles-capability
 echo
 
 # ---------------------------------------------------------------------------
@@ -215,7 +220,7 @@ echo
 # turns a row red (docs/rules/test.md §9-13).
 # ---------------------------------------------------------------------------
 echo "=== does it run, not just type-check? ==="
-probe B5+ pass 'test result: ok. 9 passed'               test -p app --test live
+probe B5+ pass 'test result: ok. 10 passed'               test -p app --test live
 echo
 
 # §9-2 applied to the harness itself, not only to the tests it runs: without
@@ -224,7 +229,7 @@ echo
 # gated on `$fail -eq 0`, so any one red row switched off the guard whose whole
 # job is to catch a deleted row — a fail-open found in #39's review (RK-016's
 # eighth instance).
-EXPECTED_ROWS=23
+EXPECTED_ROWS=25
 if [[ $((pass + fail)) -ne $EXPECTED_ROWS ]]; then
     printf 'FATAL: %d rows ran, expected %d — a probe line was removed.\n' \
         "$((pass + fail))" "$EXPECTED_ROWS" >&2

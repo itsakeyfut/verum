@@ -53,3 +53,7 @@ e5-nosend-across-await = []
 # Forwards to `fw`, because the signature under test cannot be implemented
 # outside the framework — `Ctx::new` is `pub(crate)`, which is probe A0.
 f1-spec-spawn = ["fw/f1-spec-spawn"]
+# F5: can the scoped job context be spawned onward, as the owned one can (F3)?
+f5-scoped-job-respawn = []
+# F6: the payload is `Send + 'static`; can a handle ride in it?
+f6-payload-smuggles-capability = []

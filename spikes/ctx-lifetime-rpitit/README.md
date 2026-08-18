@@ -115,6 +115,9 @@ in `run.sh`.
 | **F1** | `ctx.spawn::<Job>` with the child borrowing the parent | fail `E0521` |
 | F2 | candidate: an **owned** `JobCtx<J>` | pass — baseline + runtime |
 | F3 | that `JobCtx` re-spawned from inside the job | **pass = the cost** (baseline) |
+| **F4** | #40's decision: a **payload** in, and the framework builds the job's context inside the task | pass — baseline + runtime |
+| **F5** | F4's context re-spawned from inside `Job::run` | fail `E0521` — **the cost F2 pays and F4 does not** |
+| **F6** | a capability handle smuggled through `J::Payload` | fail `E0521` |
 
 ---
 
@@ -291,12 +294,31 @@ other half, and it is unprobed here — see ADR-0005.
 > future criterion for containment has to name **what the contained thing hands out**,
 > not only the thing itself.
 
-### #40 — the promised alternative, and what the working one costs
+### #40 — decided (ADR-0012, 2026-08-18): the payload form
 
 F1: the child borrowing the parent cannot be implemented — `E0521`, the same
 error as the `tokio::spawn` it replaces. F2: an **owned** `JobCtx<J>` compiles
 and runs. F3: that `JobCtx` is `'static`, so the child can spawn it onward
 without bound.
+
+**F4 is the third shape, and it is the one chosen.** The handler hands over a
+*payload*; the framework builds the job's context **inside** the spawned task,
+borrowed from a `Runtime` clone that task owns. That is the same construction
+`serve.rs` uses to manufacture `'req` — a value the future owns, borrowed — one
+level down. So the spawned future is `'static` while the job's context is not:
+**F5 is `E0521`** where F3 compiles, and **F6 is `E0521`** too, because
+`J::Payload: Send + 'static` is the same bound that keeps a (non-`'static`, since
+#39) capability handle out of the payload.
+
+The consequence for the ledger is the interesting part: #40 was filed expecting a
+checked alternative to require a `'static` capability-carrying type, and therefore
+that paths 6/7's argument would need re-deriving. **It does not** — F2 is the shape
+that would have forced that, and it is rejected for precisely that reason rather
+than for failing to work.
+
+`Job::run` is a **trait method**, not a closure: the higher-ranked closure over a
+context is where D1/D5 kept producing `not general enough`, while the trait-method
+shape is `Handler::handle`'s and is measured to work.
 
 Note the coupling the design review found: `JobCtx` holds the store directly, so
 adopting a lifetime-bound `Repo` for #39 does not help if #40 adopts F2.

@@ -814,14 +814,18 @@ That is M3's `T-M3-02`, and it is the reason this row exists before the guard do
 declared. **Block a path and provide a checked alternative in the same change**
 ([`../specs/unverified-boundaries.md`](../specs/unverified-boundaries.md)).
 
-> **⚠️ That alternative does not compile as specified** (#14, probe F1: `E0521` —
-> the same error as the `tokio::spawn` it replaces). A child context that borrows
-> the parent cannot be written. An owned `JobCtx<Job>` does compile (F2) but is
-> `'static`, so it can be spawned onward without bound (F3) — reintroducing what
-> `'req` exists to prevent. **The rule above is currently unsatisfied for this
-> route**; #40 decides. **The coupling is narrower than first recorded** — #39
-> settled whether the handle carries `'req`; what stays with #40 is which *field*
-> carries it, plus `JobCtx`'s own shape. Detail in
+> **The rule is satisfied for this route as of #40, and the shape changed to get
+> there.** `ctx.spawn::<J>` takes a **payload**, not a closure over a context: the
+> spawned task owns a `Runtime` clone and the job's context borrows *that*, so
+> `'job` is a real lifetime and the spawned future's `'static` does not propagate
+> into anything capability-carrying (F4; F5 and F6 are the controls). The shape
+> originally written here — a child context borrowing the parent — is `E0521`
+> (F1, the same error as the `tokio::spawn` it replaces), and an **owned**
+> `JobCtx` compiles (F2) but can be spawned onward without bound (F3), which is
+> why it was rejected rather than adopted.
+>
+> What remains with #40 is `JobCtx`'s enforcement of `J`'s declared set —
+> **未検証**, and the same extension-trait mechanism as `Repo`'s. Detail in
 > [`../specs/capability-system.md`](../specs/capability-system.md) and
 > [ADR-0005](../adr/0005-repo-handle-shape.md).
 

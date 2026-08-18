@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use app::{NoSendBeforeAwaitEndpoint, SpawnControl, UpdateUser};
+use app::{NoSendBeforeAwaitEndpoint, ScopedSpawnEndpoint, SpawnControl, UpdateUser};
 use fw::{Domain, Req, Router, Runtime, Server, get};
 
 /// Generates the `Handler` boilerplate for an endpoint that forwards to one of
@@ -249,6 +249,40 @@ async fn e5b_nosend_handle_mutates_before_the_await() {
         rt.peek(1).unwrap().email(),
         "nosend@example.com",
         "`+ Send` did not stop the `!Send` handle: the mutation happened before the await"
+    );
+}
+
+/// F4 — the checked spawn alternative runs **after** the response, and its context
+/// is scoped rather than `'static`.
+///
+/// The compile-side halves are F4 (it compiles), F5 (the job's context cannot be
+/// re-spawned — `E0521`, which is the cost F2/F3 pays and this shape does not) and
+/// F6 (a handle cannot ride in the payload). This is the half that shows the
+/// mechanism actually does the work: the handler returns "accepted" immediately and
+/// the store changes afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn f4_scoped_job_mutates_after_the_response() {
+    let rt = Runtime::new();
+    rt.seed(Domain::new(77, "before@example.com"));
+
+    let router = Router::new().route("/scoped", ScopedSpawnEndpoint);
+    let out = serve_one(router, rt.clone(), "/scoped", "77:job@example.com").await;
+    assert_eq!(
+        out, "accepted",
+        "the handler returned without awaiting the job"
+    );
+
+    // The job yields once before writing, so the response is out first.
+    for _ in 0..50 {
+        if rt.peek(77).unwrap().email() == "job@example.com" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        rt.peek(77).unwrap().email(),
+        "job@example.com",
+        "the scoped job never ran: the checked alternative does not actually work"
     );
 }
 

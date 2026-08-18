@@ -60,11 +60,12 @@ case better: it names the trait-bound alternative that *would* let Verum own the
 wording. The full list is in
 [`diagnostics.md`](./diagnostics.md)「Rustc-native diagnostics Verum cannot reword」.)
 
-> **And the checked alternative offered below produces the same `E0521`** — see
-> §Provide an alternative route for spawning, probe F1. The two facts are fifty
-> lines apart and each is weaker read alone: this route is blocked by an error
-> Verum cannot phrase, *and* the route it is blocked in favour of does not
-> compile.
+> **The alternative offered below no longer produces the same `E0521`** — see
+> §Provide an alternative route for spawning. It did when this note was written
+> (probe F1), which is why the two facts were put next to each other: this route is
+> blocked by an error Verum cannot phrase, and for a while the route it was blocked
+> in favour of did not compile either. #40 fixed the second half by changing the
+> alternative's shape (F4), so what remains true here is only the first.
 
 **`Send` is preserved.** For the handler's future to load onto hyper's
 multi-thread runtime it must be `Send`, so `Ctx` must be too. Dropping `'static`
@@ -120,38 +121,86 @@ one underneath it, and until #14 no document had it.
 ### Provide an alternative route for spawning
 
 Blocking it alone leaves the user with no way to avoid `tokio::spawn`. A
-Verum-mediated spawn is provided.
+Verum-mediated spawn is provided — **the handler hands over a payload, never a
+context.**
 
 ```rust,ignore   // fragment, not a complete item
-ctx.spawn::<SendEmailJob>(|jctx| async move { ... });
+// in the handler — no capability crosses the boundary
+ctx.spawn::<SendEmailJob>((user.id(), req.email))?;
+
+// the job the user declares, shaped like `Handler` rather than a closure
+impl Job for SendEmailJob {
+    type Payload = (UserId, Email);
+
+    fn run(ctx: JobCtx<'_, Self>, (id, to): Self::Payload)
+        -> impl Future<Output = Result<()>> + Send { /* ... */ }
+}
 ```
 
 - Declaring the `Spawn<SendEmailJob>` effect is required
-- The child task receives a **narrowed capability set**
+- The child task receives a **narrowed capability set** — `J`'s declared set, not
+  the request's
 - It appears in the contract, so it is traceable from the AI Context
 
 **Removing "the easier unchecked route" requires providing a checked alternative
 at the same time as blocking.**
 
-> ### ⚠️ The shape above does not compile (measured, #14 probe F1)
->
-> A child that **borrows** the parent's context fails with `E0521` — the same
-> error, for the same reason, as the `tokio::spawn` it is offered as the
-> alternative to. So the checked alternative this section promises does not
-> currently exist, which is the state ARK-002 warns produces: a blocked route
-> with nothing beside it.
->
-> | Probe | Shape | Result |
-> |---|---|---|
-> | **F1** | the shape above — `jctx` borrows the parent | `E0521` |
-> | F2 | an **owned** `JobCtx<Job>` handed to the child | compiles and runs |
-> | F3 | that `JobCtx` spawned onward from inside the job | compiles — **the cost** |
->
-> F2 works, and F3 is what it costs: an owned `JobCtx` is `'static`, so a
-> capability-carrying value with no request bound now exists — which is precisely
-> what `'req` was introduced to prevent. **The choice between them is #40's**, and
-> #40 cannot be settled independently of #39: the spike's `JobCtx` holds the store
-> directly, so adopting a lifetime-bound `Repo` does not help if F2 is taken.
+#### Why the payload, and why `'job` is not `'static` (#40, measured)
+
+The obvious shape — passing the child a context — cannot work, and the obvious
+fix costs the guarantee. Both were measured before this one was chosen:
+
+| Probe | Shape | Result |
+|---|---|---|
+| **F1** | `ctx.spawn::<J>(\|jctx\| ..)` where `jctx` **borrows** the parent | `E0521` — a spawned future must be `'static` |
+| F2 | an **owned** `JobCtx<J>` handed to the child | compiles and runs |
+| F3 | that owned `JobCtx` spawned onward from inside the job | compiles — **the cost** |
+| **F4** | **the shape above**: a payload in, and the framework builds the context inside the task | compiles, and the job is observed to mutate **after** the response |
+| **F5** | F4's context spawned onward from inside `Job::run` | `E0521` — **the cost is not paid** |
+| **F6** | a capability handle smuggled through `J::Payload` | `E0521` |
+
+The mechanism is one the design **already uses one level up**, and that is the
+whole reason it works: `'req` is not handed in by hyper — `serve.rs` clones the
+`Runtime` **into each request's own future**, and `'req` is the borrow of that
+clone (see the note under §The erasure layer builds the `Ctx`). A spawned task can
+do exactly the same: it owns a clone, and **`'job` is the borrow of it**.
+
+So the spawned *future* is `'static` while the job's *context* is not. What
+crosses the boundary is a `Runtime` — which is not a capability, it is what a
+context is built **from**, and its constructor is what the sealed token gates
+(ADR-0006) — plus an owned payload.
+
+> **And `'job` carries the same caveat `'req` does, for the same reason.** What makes
+> `'job` mean "this job" is not in the signature: it is that `spawn` borrows a
+> **task-owned** clone. A context borrowing a leaked `Runtime` would satisfy every
+> recorded signature, be non-`'static` exactly as required, and span the process —
+> measured, it compiles with zero errors, and probe F5 does not detect it. The
+> constraint belongs in the framework's generated code, not in the type, precisely as
+> the note on `'req` above says. #60 / `T-M3-02` owns pinning it. `J::Payload: Send + 'static` is what makes the
+payload crossable, and since #39 made every capability handle non-`'static`, **the
+same bound is what keeps a handle out of it** (F6).
+
+> **The consequence for the ledger.** #40 was filed expecting that a checked
+> alternative would require a `'static` capability-carrying type to exist, and
+> therefore that the argument for paths 6 and 7 would have to be **re-derived**.
+> It does not: under F4 no capability-carrying value is `'static` at either level,
+> so "no capability-bearing value is `'static`" survives as written. F2 is the
+> shape that would have forced the re-derivation, and it is **rejected for that
+> reason** — not because it fails to work.
+
+**`Job::run` is a trait method, not a closure, and deliberately.** A
+higher-ranked closure over a context is precisely where the `when` scope kept
+producing `not general enough` (probes D1 / D5); the trait-method shape is the one
+measured to work, and it is the same shape `Handler::handle` already has. It also
+costs nothing the framework wants: a named `Job` type with a declared contract is
+more inspectable from the AI Context than an anonymous closure.
+
+> **未検証**: that `JobCtx`'s methods enforce `J`'s declared set. The spike's
+> stand-in is unconditional. The mechanism is **identical to `Repo`'s** — a
+> derive-emitted extension trait whose methods carry
+> `where J::Mutates: Has<Mutate<D, F>, I>`, settled in ADR-0002 and #39 — so
+> nothing new is being assumed; it is simply not yet compiled here. It is an
+> acceptance condition of `T-M3-02`.
 
 ### Seal the construction route
 

@@ -41,7 +41,10 @@ mod ctx;
 mod erase;
 mod serve;
 
-pub use ctx::{Ctx, CtxNoSized, JobCtx, Repo, RepoLt, RepoNoSend, RepoPhantom, Runtime};
+pub use ctx::{
+    Ctx, CtxNoSized, JobCtx, Repo, RepoLt, RepoNoSend, RepoPhantom, Runtime, ScopedJob,
+    ScopedJobCtx,
+};
 pub use erase::{ErasedHandler, Handler, Router};
 pub use serve::{Server, get};
 
