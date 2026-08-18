@@ -358,7 +358,7 @@ existence.
 a rustc lifetime error** — not by the macro, not by an equality bound, not by a
 Verum trait bound. The layer table does not cover it, and reading the table as if
 it did is how the boundary gets described as "designed" when what holds it is
-`Ctx<'req, E>` not being `'static`. T-M1-02 measured the limit of that: **`+ Send`
+`Ctx<'req, E>` not being `'static` — **and, since #39, `Repo<'req, D, R, M>` not being `'static` either**, which is the same `E0521` from a bare `'static` bound rather than from `spawn`. It is now the **first rustc-native diagnostic Verum cannot reword that is pinned by a `.stderr`** (`tests/ui/compile_fail/repo_handle_cannot_outlive_its_request.rs`), so its wording is a specification whether or not Verum chose it. It is also a **second instance** of the both-directions exception below: the 13-line output carries no `help:` and no `note:`, so it names no checked alternative — and the alternative for the need it blocks (`ctx.spawn::<Job>`) does not compile. T-M1-02 measured the limit of that: **`+ Send`
 on a returned future is not a containment bound**, so a synchronous body can
 build and leak whatever it likes outside any `.await`.
 

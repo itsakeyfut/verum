@@ -314,6 +314,9 @@ principle.
 ```rust,compile_fail
 // ❌ cannot be written in the user's crate
 impl<E: Endpoint> Ctx<E> { fn users(&self) -> Repo<User, ...> { ... } }
+// (pre-#39 shape on purpose: this block is the ❌ counter-example for E0116, and
+//  the `...` makes no arity claim. Do not "fix" it to `Repo<'_, ..>` — the ✅ half
+//  below is what carries the current shape.)
 // error[E0116]: cannot define inherent `impl` for a type outside of the crate
 ```
 
@@ -323,7 +326,7 @@ two-crate setup).
 ```rust,ignore   // fragment, not a complete item
 pub trait CtxUsers {
     type R; type M;
-    fn users(&self) -> Repo<User, Self::R, Self::M>;
+    fn users(&self) -> Repo<'_, User, Self::R, Self::M>;
 }
 
 impl<'req, E: Endpoint> CtxUsers for Ctx<'req, E> { ... }
@@ -333,7 +336,7 @@ pub trait UserRepo<M> {
     where M: Has<Mutate<User, user::Email>, I>;
 }
 
-impl<R, M> UserRepo<M> for Repo<User, R, M> { ... }
+impl<'req, R, M> UserRepo<M> for Repo<'req, User, R, M> { ... }
 ```
 
 ### Side effects
@@ -342,7 +345,7 @@ impl<R, M> UserRepo<M> for Repo<User, R, M> { ... }
   error "no method named `users`" → **the derive emits a `pub use`, or
   `verum::prelude` is provided**
 - Going through associated types lengthens the type names
-  (`Repo<User, <Ctx<E> as CtxUsers>::R, _>`)
+  (`Repo<'_, User, <Ctx<E> as CtxUsers>::R, _>`)
 
 ### The where clause goes on the method
 

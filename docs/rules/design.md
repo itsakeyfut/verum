@@ -94,7 +94,7 @@ crates/verum/src/
 ├── effect.rs        — Read / Mutate / Create / Delete / Emit / Call / When
 ├── typelevel.rs     — Has / Append / Lookup / Here / There
 ├── domain.rs        — the Field trait, Includes
-├── capability.rs    — Ctx<'req, E>, Repo<D, R, M>
+├── capability.rs    — Ctx<'req, E>, Repo<'req, D, R, M>
 ├── handler.rs       — the Handler trait and the object-safe erasure layer
 ├── contract.rs      — ContractEntry, inventory collection, JSON output
 ├── error.rs         — VerumError

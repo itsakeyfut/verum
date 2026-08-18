@@ -55,7 +55,7 @@ pub trait CtxUsers {
     // method's where clause cannot name `E`, so the trait exposes it as an
     // associated type — see ../adr/0001 and ../adr/0002.
     type Owner;
-    fn users(&self) -> Repo<User, Self::R, Self::M>
+    fn users(&self) -> Repo<'_, User, Self::R, Self::M>
     where <Self as CtxUsers>::Owner: Includes<User>;   // ← the where goes on the method
 }
 
@@ -116,7 +116,7 @@ let svc = UserUpdateService::new(Arc::new(repo) as Arc<dyn UserRepository>);
 ```
 
 **Do not expose `dyn Repository`.** What a service may receive is a
-parameterised `Repo<D, R, M>`, and the service itself carries capabilities in its
+parameterised `Repo<'req, D, R, M>`, and the service itself carries capabilities in its
 type as `Service<Reads, Mutates>`.
 
 Effects reached through a service also fall outside

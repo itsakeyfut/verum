@@ -19,6 +19,7 @@
 //! else; `verum` depends on it and will re-export the macros here once they
 //! exist.
 
+mod capability;
 mod domain;
 mod sealed;
 mod typelevel;
@@ -30,6 +31,7 @@ mod typelevel;
 // implementors in each error.
 pub(crate) use sealed::{derive_facing, private};
 
+pub use capability::Repo;
 pub use domain::Includes;
 pub use typelevel::{Append, ConsList, Has, Here, Index, Lookup, There};
 

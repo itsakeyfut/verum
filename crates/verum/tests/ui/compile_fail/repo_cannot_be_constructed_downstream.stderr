@@ -1,0 +1,11 @@
+error[E0451]: field `_req` of struct `Repo` is private
+  --> tests/ui/compile_fail/repo_cannot_be_constructed_downstream.rs:23:9
+   |
+23 |         _req: core::marker::PhantomData,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ private field
+
+error[E0451]: field `_model` of struct `Repo` is private
+  --> tests/ui/compile_fail/repo_cannot_be_constructed_downstream.rs:24:9
+   |
+24 |         _model: core::marker::PhantomData,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ private field

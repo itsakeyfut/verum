@@ -198,6 +198,11 @@ echo
 echo "=== #39 — capability handles and 'req (measured, not decided) ==="
 probe E2 fail 'E0521'                                    check -p app --features e2-repo-lifetime-attack
 probe E4a fail 'E0521'                                   check -p app --features e4-repo-phantom-attack
+# E5 / E5b — should the handle ALSO be `!Send`? E5 is the cost, E5b the porousness.
+# The needle names `RepoNoSend` rather than the generic `Send` prose, which A3's
+# row emits byte-identically — review re-pointed this row at A3's feature and it
+# still read "as specified" with nothing under test compiled.
+probe E5 fail 'RepoNoSend'                               check -p app --features e5-nosend-across-await
 echo
 
 echo "=== #40 — ctx.spawn (measured, not decided) ==="
@@ -210,14 +215,19 @@ echo
 # turns a row red (docs/rules/test.md §9-13).
 # ---------------------------------------------------------------------------
 echo "=== does it run, not just type-check? ==="
-probe B5+ pass 'test result: ok. 8 passed'               test -p app --test live
+probe B5+ pass 'test result: ok. 9 passed'               test -p app --test live
 echo
 
 # §9-2 applied to the harness itself, not only to the tests it runs: without
 # this, deleting a `probe` line above leaves the suite green. Measured.
-EXPECTED_ROWS=22
-if [[ $pass -ne $EXPECTED_ROWS && $fail -eq 0 ]]; then
-    echo "FATAL: $pass rows ran, expected $EXPECTED_ROWS — a probe line was removed." >&2
+# The count is over pass+fail, and the check is UNCONDITIONAL. It used to be
+# gated on `$fail -eq 0`, so any one red row switched off the guard whose whole
+# job is to catch a deleted row — a fail-open found in #39's review (RK-016's
+# eighth instance).
+EXPECTED_ROWS=23
+if [[ $((pass + fail)) -ne $EXPECTED_ROWS ]]; then
+    printf 'FATAL: %d rows ran, expected %d — a probe line was removed.\n' \
+        "$((pass + fail))" "$EXPECTED_ROWS" >&2
     exit 1
 fi
 

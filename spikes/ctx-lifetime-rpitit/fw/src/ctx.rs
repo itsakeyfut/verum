@@ -88,6 +88,15 @@ impl<'req, E: Endpoint> Ctx<'req, E> {
         }
     }
 
+    /// #39 candidate 3: `'req` **and** `!Send`, to measure what `!Send` adds.
+    pub fn users_nosend(&self) -> RepoNoSend<'req, Domain, E::Reads, E::Mutates> {
+        RepoNoSend {
+            store: Arc::clone(&self.rt.store),
+            _p: PhantomData,
+            _not_send: PhantomData,
+        }
+    }
+
     /// The conditional scope, written **exactly as the spec elides it**.
     ///
     /// The elision matters and is the subject of probe D1: this desugars to
@@ -350,6 +359,41 @@ pub struct RepoPhantom<'req, D, R, M> {
 }
 
 impl<R, M> RepoPhantom<'_, Domain, R, M> {
+    pub fn find(&self, id: u64) -> Result<Domain> {
+        self.store
+            .lock()
+            .expect("store poisoned")
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| Error(format!("no such user: {id}")))
+    }
+
+    pub fn set_email(&self, user: &mut Domain, v: String) -> Result<()> {
+        user.set_email_raw(v.clone());
+        self.store
+            .lock()
+            .expect("store poisoned")
+            .entry(user.id())
+            .and_modify(|d| d.set_email_raw(v));
+        Ok(())
+    }
+}
+
+/// #39's third candidate, measured to answer "should the handle **also** be
+/// `!Send`?" — the question the issue asks to settle "while here".
+///
+/// Identical to [`RepoPhantom`] plus a `*const ()`, which removes the auto
+/// `Send` impl. `'req` is kept: the question is whether `!Send` buys anything
+/// **on top of** the lifetime, and what it costs.
+pub struct RepoNoSend<'req, D, R, M> {
+    store: Store,
+    _p: PhantomData<(fn() -> (D, R, M), &'req ())>,
+    /// The only difference from `RepoPhantom`. A raw pointer is not `Send`, and
+    /// that propagates to the struct.
+    _not_send: PhantomData<*const ()>,
+}
+
+impl<R, M> RepoNoSend<'_, Domain, R, M> {
     pub fn find(&self, id: u64) -> Result<Domain> {
         self.store
             .lock()

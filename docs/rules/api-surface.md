@@ -768,16 +768,47 @@ materialised as a value. Do not expose an API taking a `Cap<T>`
 
 ---
 
-## 5. `Ctx` is not `'static`
+## 5. `Ctx` is not `'static` — **and neither is anything it hands out**
 
 ```rust,ignore   // declaration shown with its body elided
-pub struct Ctx<'req, E> { /* ... */ }   // not 'static; Send is kept
+pub struct Ctx<'req, E> { /* ... */ }        // not 'static; Send is kept
+pub struct Repo<'req, D, R, M> { /* ... */ } // the handle carries 'req too (#39)
 ```
 
 - **Not `'static`** → it cannot be passed to `tokio::spawn`, closing the route by
   which a capability crosses the request boundary.
 - **`Send` is kept** → the handler's future must be `Send` to load onto hyper's
   multi-thread runtime.
+
+> **Containing the `Ctx` is not sufficient, and this was measured the hard way.**
+> Until #39 the handles `Ctx` produced carried **no lifetime**, so they owned their
+> access and were `'static`: the `Ctx` was contained and everything it handed out
+> was not. A handle taken from a correctly scoped `Ctx`, moved out, and used after
+> the response had been sent **mutated the store 150 ms later** — asserted at run
+> time (`spikes/ctx-lifetime-rpitit`, probe E1).
+>
+> It survived #14's review because field-granular checking **survives the escape**:
+> an escaped handle still cannot touch an undeclared field. It is **scope escape,
+> not capability forgery**, and every criterion phrased in terms of forgery is blind
+> to it. Ledger path 24; [ADR-0005](../adr/0005-repo-handle-shape.md).
+>
+> **The rule, therefore: a capability handle carries `'req`.** `Repo<'req, D, R, M>`
+> is the one that exists today; `events()` / `email()` / `cache()` / `audit_logs()`
+> return the same shape and are bound by the same rule when they are written.
+>
+> ⚠️ **Enforced on users, a convention on emitters.** `Repo`'s `'req` is carried by a
+> `PhantomData` marker, so a producer written `fn users<'any>(&self) -> Repo<'any, ..>`
+> compiles; with a `&'req Runtime` field it would not (measured both ways). The
+> `compile_fail` fixture pins the hand-written type, not the generated producer —
+> #40.
+
+**`Repo` has no public constructor**, and must not acquire one: a capability value
+anyone can mint is not a capability. It is not sealed and needs no seal — it is a
+struct, and a downstream struct literal is `E0451` (both fields private). What *is*
+still open is the **derive-emitted extension trait** it will carry methods through:
+`impl UserRead<Wide> for Repo<'_, Domain, Narrow, ()>` is a local trait on a foreign
+type, so the orphan rule permits it and a downstream crate can claim any read set.
+That is M3's `T-M3-02`, and it is the reason this row exists before the guard does.
 
 `ctx.spawn::<Job>(..)` is provided instead, requiring a `Spawn<Job>` effect to be
 declared. **Block a path and provide a checked alternative in the same change**
@@ -788,8 +819,11 @@ declared. **Block a path and provide a checked alternative in the same change**
 > the parent cannot be written. An owned `JobCtx<Job>` does compile (F2) but is
 > `'static`, so it can be spawned onward without bound (F3) — reintroducing what
 > `'req` exists to prevent. **The rule above is currently unsatisfied for this
-> route**; #40 decides, and cannot be decided independently of #39. Detail in
-> [`../specs/capability-system.md`](../specs/capability-system.md).
+> route**; #40 decides. **The coupling is narrower than first recorded** — #39
+> settled whether the handle carries `'req`; what stays with #40 is which *field*
+> carries it, plus `JobCtx`'s own shape. Detail in
+> [`../specs/capability-system.md`](../specs/capability-system.md) and
+> [ADR-0005](../adr/0005-repo-handle-shape.md).
 
 ---
 
@@ -939,6 +973,9 @@ derive on it is back in scope, including ones added for unrelated convenience.
 - ❌ Expose a `State`-equivalent entry point that can produce anything.
 - ❌ Publish `Endpoint` / `Has` / `Includes` / `Field` / `Condition` unsealed.
 - ❌ Make `Ctx` `'static`, or give it a public constructor.
+- ❌ Return a capability **handle** without `'req` (§5). Containing the `Ctx` and
+  letting what it hands out be `'static` is the hole #39 found, measured at run
+  time.
 - ❌ Create a backend trait with a single implementation.
 - ❌ Expose an API taking a `Cap<T>`.
 - ❌ Expose an escape hatch without a proof token — recording it would be

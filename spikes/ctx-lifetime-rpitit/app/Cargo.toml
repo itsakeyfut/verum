@@ -46,6 +46,10 @@ d3-when-leak-fixed-return = []
 d4-when-leak-unconstrained = []
 e2-repo-lifetime-attack = []
 e4-repo-phantom-attack = []
+# E5: does `!Send` add anything on top of `'req`? E5b is NOT a feature — it is
+# compiled unconditionally and asserted in tests/live.rs, because a `pass` row's
+# only needle is `Finished` and that made it forgeable by re-pointing.
+e5-nosend-across-await = []
 # Forwards to `fw`, because the signature under test cannot be implemented
 # outside the framework — `Ctx::new` is `pub(crate)`, which is probe A0.
 f1-spec-spawn = ["fw/f1-spec-spawn"]

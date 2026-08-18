@@ -51,7 +51,7 @@ pub trait CtxUsers {
     type M;
     type Owner;                    // = the endpoint type
 
-    fn users(&self) -> Repo<User, Self::R, Self::M>
+    fn users(&self) -> Repo<'_, User, Self::R, Self::M>
     where Self::Owner: Includes<User>;
 }
 
@@ -59,7 +59,7 @@ impl<'req, E: Endpoint> CtxUsers for Ctx<'req, E> {
     type R = E::Reads;
     type M = E::Mutates;
     type Owner = E;
-    fn users(&self) -> Repo<User, E::Reads, E::Mutates> { /* ... */ }
+    fn users(&self) -> Repo<'_, User, E::Reads, E::Mutates> { /* ... */ }
 }
 ```
 

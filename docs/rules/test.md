@@ -86,6 +86,7 @@ fn contract_violations_should_not_compile() {
 | Assigning `user.email = v` directly | Domain opacity | designed |
 | A `pub` field on a domain | The macro's layer-1 check | designed |
 | `ctx.orders()` for an undeclared domain | The Architecture Contract | **implemented** |
+| A capability **handle** carried past the request | `Repo<'req, D, R, M>` is not `'static` | **implemented** — `tests/ui/compile_fail/repo_handle_cannot_outlive_its_request.rs` (`E0521`) + its `pass` pair, and `repo_cannot_be_constructed_downstream.rs` (`E0451`) for the construction route. ⚠️ Both pin the hand-written type; the generated producer is unpinned (#40). Ledger path 24 |
 | `tokio::spawn(.. ctx ..)` | `Ctx<'req, E>` is not `'static` | **measured** — T-M1-02 probe C1, `E0521` (ledger path 6). The promised alternative `ctx.spawn::<Job>` does **not** compile (#40) |
 | Hand-written `impl Endpoint` / `impl Includes` | Sealed traits | **implemented** (`Includes`) |
 | Returning `Ok(ctx)` from `when` | **The higher-ranked `Ctx` in the `Fn`-trait position** — *not* the closure's return type | designed. T-M1-02 measured that the return type is redundant, and that a **named `'req` leaks the scope through an out-parameter while the return type stays `Result<()>`** |
