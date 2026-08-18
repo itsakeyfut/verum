@@ -167,7 +167,7 @@ are *not* redundant either.**
 > [ADR-0004](../adr/0004-reads-enforcement-level.md), which stays `proposed`.
 >
 > **The getter lives in a derive-emitted extension trait, not on the repository.**
-> An inherent `impl Repo<Domain, ..>` is `E0116` in the real layering, where the
+> An inherent `impl Repo<'_, Domain, ..>` is `E0116` in the real layering, where the
 > framework owns `Repo` and the user's crate owns the `Domain`. So
 > `user.email()` becomes `ctx.users().email(&user)`, which is symmetric with the
 > setters and consistent with [`handler-rules.md`](./handler-rules.md) Rule 2. The

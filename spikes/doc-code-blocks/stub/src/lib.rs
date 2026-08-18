@@ -54,9 +54,25 @@ pub trait Condition<Domain, Request> {
     fn holds(domain: &Domain, req: &Request) -> bool;
 }
 
-/// Used at `docs/specs/capability-system.md:187,195` as `Repo<D, R, M>` and
-/// **never declared anywhere in `docs/`**. UNDECLARED — #43 finding.
-pub struct Repo<D, R, M>(PhantomData<fn() -> (D, R, M)>);
+/// **Declared** since #39 / ADR-0005 — transcribed from
+/// `crates/verum/src/capability.rs`, no longer a placeholder read off the usage.
+///
+/// `'req` is the whole point: it is what stops a handle outliving the request that
+/// granted it.
+///
+/// **It does not make this harness an enumerator for a lifetime change, and #39
+/// first claimed that it did.** A lifetime argument may be **elided in path
+/// position**, so `Repo<User, R, M>` compiles against this declaration with no
+/// diagnostic at all on 1.85.0 — the toolchain `check.py` pins. Dropping a *type*
+/// argument is `E0107`; dropping the lifetime is legal Rust. Measured both ways.
+///
+/// What it does earn: a block that *supplies* a lifetime to a lifetime-less `Repo`
+/// is rejected. That is the opposite of the direction a sweep runs in, so a sweep
+/// still has to be grep-driven.
+///
+/// Which concrete field carries the lifetime is #40 / ADR-0006's; the marker
+/// reproduces the *shape*, which is all a doc block can exercise.
+pub struct Repo<'req, D, R, M>(PhantomData<&'req ()>, PhantomData<fn() -> (D, R, M)>);
 
 /// `docs/specs/capability-system.md:70` takes `&'req Runtime<Sealed>`.
 /// `Runtime` itself is never declared. UNDECLARED — #43 finding.

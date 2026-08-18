@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use app::{SpawnControl, UpdateUser};
+use app::{NoSendBeforeAwaitEndpoint, SpawnControl, UpdateUser};
 use fw::{Domain, Req, Router, Runtime, Server, get};
 
 /// Generates the `Handler` boilerplate for an endpoint that forwards to one of
@@ -220,6 +220,35 @@ async fn d5e_escaped_ctx_mutates_after_the_when_scope_returned() {
         rt.peek(31).unwrap().email(),
         "leaked-after-scope@example.com",
         "`+ Send` did not contain the scope: the Ctx was used after `when` returned"
+    );
+}
+
+/// E5b — a `!Send` handle mutates **before** the await, inside a `+ Send` future.
+///
+/// `!Send` was considered as an extra restriction on the handle and rejected. This
+/// is the half the rejection rests on: `+ Send` on the returned future reaches only
+/// what is held **across** an await, so a handle used and dropped before it does
+/// its work unimpeded. RK-017's await-scope half.
+///
+/// Executed rather than merely compiled, because the compile-only form was
+/// satisfiable by an ordinary `Send` handle — review deleted the whole body and the
+/// row stayed green.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e5b_nosend_handle_mutates_before_the_await() {
+    let rt = Runtime::new();
+    rt.seed(Domain::new(1, "before@example.com"));
+
+    let router = Router::new().route("/nosend", NoSendBeforeAwaitEndpoint);
+    let out = serve_one(router, rt.clone(), "/nosend", "1:ignored@example.com").await;
+
+    assert_eq!(
+        out, "nosend@example.com",
+        "the handler returned the value it wrote through the `!Send` handle"
+    );
+    assert_eq!(
+        rt.peek(1).unwrap().email(),
+        "nosend@example.com",
+        "`+ Send` did not stop the `!Send` handle: the mutation happened before the await"
     );
 }
 

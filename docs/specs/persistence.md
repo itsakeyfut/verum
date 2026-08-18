@@ -28,7 +28,7 @@ pub trait UserRepository {
 > parameters of `Ctx<'req, E>` ([`rust-type-model.md`](./rust-type-model.md)), so
 > it was removed.
 >
-> The capability check happens in the where clause of `Repo<User, R, M>`'s
+> The capability check happens in the where clause of `Repo<'req, User, R, M>`'s
 > extension trait.
 
 ```rust,ignore   // fragment, not a complete item
@@ -38,10 +38,10 @@ pub trait UserRepo<M> {
     where M: Has<Mutate<User, user::Email>, I>;
 }
 
-impl<R, M> UserRepo<M> for Repo<User, R, M> { ... }
+impl<'req, R, M> UserRepo<M> for Repo<'req, User, R, M> { ... }
 ```
 
-`Repo<D, R, M>` is the only exposed surface on which capabilities are checked;
+`Repo<'req, D, R, M>` is the only exposed surface on which capabilities are checked;
 `UserRepository` sits inside it as a plain persistence trait.
 
 ### Why
@@ -102,10 +102,13 @@ impl UserRepository for PgUserRepository {
 > domain the call site is *this* module, so the `Repr` can carry no modifier either
 > — which also closes ledger paths 3 and 4 through it (P30). See ADR-0010.
 
-### Verdict (T-M1-01 / #13, extended by #33 and #34. **44 probes, compile-verified**)
+### Verdict (T-M1-01 / #13, extended by #33, #34 and #35. **Compile-verified**)
 
 Reproduce with `spikes/domain-opacity-sqlx/` (`bash run.sh` →
-`44 as specified, 0 unexpected`). **Run it on an otherwise idle checkout**: a
+`N as specified, 0 unexpected`). **`EXPECTED_ROWS` in `run.sh` is the count** — it
+was written out here as "44 probes" and was stale by one before #35 raised it and
+by two after, so the number now lives in one place. **Run it on an otherwise idle
+checkout**: a
 concurrent `cargo` (an IDE checker, a second shell) has been observed to produce a
 spurious `UNEXPECTED` row, because the `touch` that defeats caching runs once at the
 top rather than per probe.

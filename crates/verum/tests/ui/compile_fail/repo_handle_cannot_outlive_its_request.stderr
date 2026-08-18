@@ -1,0 +1,12 @@
+error[E0521]: borrowed data escapes outside of function
+  --> tests/ui/compile_fail/repo_handle_cannot_outlive_its_request.rs:24:5
+   |
+23 | fn escapes<'req>(r: verum::Repo<'req, User, (), ()>) {
+   |            ----  - `r` is a reference that is only valid in the function body
+   |            |
+   |            lifetime `'req` defined here
+24 |     needs_static(r);
+   |     ^^^^^^^^^^^^^^^
+   |     |
+   |     `r` escapes the function body here
+   |     argument requires that `'req` must outlive `'static`

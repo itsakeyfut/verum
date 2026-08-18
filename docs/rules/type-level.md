@@ -575,7 +575,7 @@ trait CtxUsers {
     // as an associated type. See ../adr/0001 and ../adr/0002.
     type Owner;
 
-    fn users(&self) -> Repo<User, Self::R, Self::M>
+    fn users(&self) -> Repo<'_, User, Self::R, Self::M>
     where Self::Owner: Includes<User>;
 }
 ```
@@ -602,12 +602,15 @@ the user's crate, so an inherent impl is structurally impossible.
 ```rust,compile_fail
 // ❌ cannot be written in a user's crate
 impl<E: Endpoint> Ctx<E> { fn users(&self) -> Repo<User, ...> { } }
+// (pre-#39 shape on purpose: this block is the ❌ counter-example for E0116, and
+//  the `...` makes no arity claim. Do not "fix" it to `Repo<'_, ..>` — the ✅ half
+//  below is what carries the current shape.)
 // error[E0116]: cannot define inherent `impl` for a type outside of the crate
 ```
 
 ```rust,ignore   // declaration shown with its body elided
 // ✅ generate a local trait
-pub trait CtxUsers { type R; type M; fn users(&self) -> Repo<User, Self::R, Self::M>; }
+pub trait CtxUsers { type R; type M; fn users(&self) -> Repo<'_, User, Self::R, Self::M>; }
 impl<'req, E: Endpoint> CtxUsers for Ctx<'req, E> { }
 ```
 

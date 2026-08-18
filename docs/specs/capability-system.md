@@ -302,6 +302,59 @@ types.
 
 ---
 
+## The capability handle: `Repo<'req, D, R, M>`
+
+This is the declaration. Until #39 there was none — eight-plus sites used the type
+and `grep 'struct Repo' docs/` returned nothing
+([ADR-0005](../adr/0005-repo-handle-shape.md)).
+
+```rust
+pub struct Repo<'req, D, R, M> {
+    // Binds the handle to the request that granted it.
+    _req: std::marker::PhantomData<&'req ()>,
+    _model: std::marker::PhantomData<fn() -> (D, R, M)>,
+}
+```
+
+**`'req` is the load-bearing parameter, and it is what #39 added.** `Ctx<'req, E>`
+is deliberately not `'static` so a capability cannot leave the request — but the
+handle carried no lifetime, so the `Ctx` was contained and everything it produced
+was not. Measured at *run time*: a handle taken from a correctly scoped `Ctx` and
+used after the response had been sent mutated the store 150 ms later
+(`spikes/ctx-lifetime-rpitit`, probe E1).
+
+What made that easy to miss is that field-granular checking **survives** the
+escape — an escaped handle still cannot touch an undeclared field. It is scope
+escape, not capability forgery.
+
+Which concrete field carries the lifetime — a `&'req Runtime`, or an owned handle
+plus this marker — is **#40 / [ADR-0006](../adr/0006-runtime-sealed-token.md)'s**.
+Both candidates were measured and both carry `'req` as the first parameter, so the
+**declared shape** is settled either way.
+
+> ⚠️ **The field is not merely internal.** With the marker above, a producer written
+> as `fn users<'any>(&self) -> Repo<'any, ..>` compiles — nothing in the compiler
+> holds the emitter to the elided form. With a `&'req Runtime` field it does not
+> (`lifetime may not live long enough`). Measured both ways; see
+> [ADR-0005](../adr/0005-repo-handle-shape.md) §The field is not "an internal
+> detail". So today `'req` is enforced on **users** of the handle and is a
+> **convention on whoever emits the producer** — closing that is #40's.
+
+`Repo` has **no public constructor** today, so no value of it can be obtained
+outside the crate at all. The constructor is *designed* to be gated on the sealed
+runtime token — **未検証**: ADR-0006 is `status: proposed`, and `crates/verum/src/`
+has no `Ctx` and no runtime yet.
+
+> Enforced by `crates/verum/tests/ui/compile_fail/repo_handle_cannot_outlive_its_request.rs`
+> (`E0521`), with `pass/repo_handle_within_request_scope.rs` as its pair.
+>
+> The block above is a **checked** block, so it compiles — but **it is not checked
+> against `crates/verum/src/capability.rs`, and no mechanism is.** It declares its own
+> `Repo`, which shadows the harness stub's glob import, so drifting it to a different
+> arity leaves `spikes/doc-code-blocks` green (measured). An earlier version of this
+> note claimed the two were "compiled against each other"; they are not. Agreement
+> between this declaration and the code is maintained by hand.
+
 ## How it works: parameterise the repository's type by the contract
 
 `Ctx` is a framework type, so domain-specific methods cannot be added by an
@@ -312,7 +365,7 @@ inherent impl (E0116). The derive generates an **extension trait** per domain.
 pub trait CtxUsers {
     type R; type M;
     type Owner;                    // = the endpoint type (ADR-0002)
-    fn users(&self) -> Repo<User, Self::R, Self::M>
+    fn users(&self) -> Repo<'_, User, Self::R, Self::M>
     where Self::Owner: Includes<User>;   // ← the where goes on the method (note below)
 }
 
@@ -320,9 +373,25 @@ impl<'req, E: Endpoint> CtxUsers for Ctx<'req, E> {
     type R = E::Reads;
     type M = E::Mutates;
     type Owner = E;
-    fn users(&self) -> Repo<User, E::Reads, E::Mutates> { ... }
+    fn users(&self) -> Repo<'_, User, E::Reads, E::Mutates> { ... }
 }
 ```
+
+> **The elision is deliberate, and it is not a shorthand for `'req`.** `Repo<'_, ..>`
+> in return position elides to **`&self`'s** lifetime, which is at most `'req` — so
+> the handle cannot outlive the borrow of the `Ctx` it came from, which is stricter
+> than tying it to `'req` directly.
+>
+> Writing `Repo<'req, ..>` in the **trait** does not compile: the trait declares no
+> `'req` to name — `error[E0261]: use of undeclared lifetime name 'req`, measured.
+> `'req` enters through the impl (`impl<'req, E> CtxUsers for Ctx<'req, E>`).
+>
+> The elided form is a **deliberate choice, not the only option.** `trait CtxUsers<'req>`
+> also compiles (it is rustc's own second suggestion on that `E0261`) and is *laxer* —
+> the handle then outlives the `Ctx` being dropped. rustc's first suggestion,
+> introducing a fresh `fn users<'r>(&self) -> Repo<'r, ..>`, is laxer still and is the
+> unconstrained producer the ⚠️ above warns about. **The `help:` line leads away from
+> the safe form**, which is worth knowing before an AI pastes it.
 
 > **Important**: the where clause goes on the **method.** On the impl it becomes
 > E0599 and `#[diagnostic::on_unimplemented]` is ignored. Detail in
@@ -364,7 +433,7 @@ let svc = UserUpdateService::new(Arc::new(repo) as Arc<dyn UserRepository>);
 ```
 
 **Do not expose `dyn Repository`.** What a service may receive is a parameterised
-`Repo<D, R, M>`, and the service itself carries the capabilities in its type as
+`Repo<'req, D, R, M>`, and the service itself carries the capabilities in its type as
 `Service<Reads, Mutates>`.
 
 ---

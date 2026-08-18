@@ -110,6 +110,7 @@ measured how far it holds. It is not a property of the language: see
 |---|---|
 | Holding a `PgPool` on the endpoint struct and running SQL directly | `#[endpoint]` rejects anything but a unit struct |
 | Carrying a capability out through `tokio::spawn` | `Ctx<'req, E>` is not `'static` |
+| Carrying out a **handle** the `Ctx` produced | `Repo<'req, D, R, M>` is not `'static` either (#39, [ADR-0005](../adr/0005-repo-handle-shape.md)). Until #39 this row was missing and the route was open — the `Ctx` was contained and everything it handed out was not, measured at run time |
 | Passing a `dyn Repository` to a service | `dyn Repository` is not exposed |
 
 ### The part that remains convention (an important limit)
@@ -238,13 +239,27 @@ ctx.after_commit(async |ctx| {
 }).await?;
 ```
 
-Issuing the capability for an external effect only inside the `ctx.after_commit`
-scope makes this enforceable by the same mechanism as `when`.
+### ⚠️ Rule 4 is a convention today, not a guarantee (#39)
 
-> The transaction boundary itself is not designed yet
-> ([`research-questions.md`](./research-questions.md)). But **the sample code is
-> written in the correct order.** Verum is a framework that supplies "the template
-> an AI imitates", and a sample teaching the wrong order gets copied as it is.
+Issuing the capability for an external effect only inside the `ctx.after_commit`
+scope **would** make this enforceable by the same mechanism as `when`. That is a
+design, not a state of the code, and the design needs a transaction boundary that
+is not designed either
+([`research-questions.md`](./research-questions.md)). **Recorded as ledger
+[path 25](./unverified-boundaries.md).**
+
+So what holds Rule 4 up right now is entirely that **the sample code above is
+written in the correct order.** Verum supplies "the template an AI imitates", and a
+sample teaching the wrong order gets copied as it is — that is a real mechanism and
+it is worth having, but it is not a type.
+
+> **Why #39 is what surfaced this.** Until #39 the handle `ctx.email()` returns
+> carried no lifetime, so an escaped one could fire before the transaction, after
+> it, or after the response had been sent — measured at run time (probe E1, on the
+> repository handle of the same shape). #39 gave the handles `'req`, which closes
+> **leaving the request** (path 24). It does nothing about **ordering within** the
+> request, and with the escape closed that is the whole of what is left. Rule 4 was
+> resting on path 24 without saying so.
 
 ---
 
@@ -336,7 +351,7 @@ impl Handler for UpdateUser {
 | Rule 1 (per-field methods) | Structurally guaranteed within what Verum generates. Depends on domain opacity | A lint (unimplemented) if the user adds methods of their own |
 | Rule 2 (through ctx) | Unit-struct enforcement / `Ctx<'req>` / no public `dyn` close the main routes in types | The purity of free-function constructors is **convention** |
 | Rule 3 (the when scope) | Capabilities issued only inside the scope. Return type fixed | The body of `Condition::holds` is **unverifiable** |
-| Rule 4 (after the commit) | External capabilities issued only in the `after_commit` scope | The transaction design is undecided |
+| Rule 4 (after the commit) | **Nothing, today.** The `after_commit` scope is the design; the transaction boundary it needs is undecided | ⚠️ **Convention** — ledger path 25. `'req` (path 24) stops a handle *leaving* the request but does not order effects *within* it |
 
 **Do not confuse what is convention with what is enforced by types.** Every
 unchecked part is listed in

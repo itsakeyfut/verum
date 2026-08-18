@@ -110,6 +110,8 @@ in `run.sh`.
 | E3 | candidate 1 still serves an ordinary handler | pass — baseline + runtime |
 | **E4a** | candidate 2 `RepoPhantom<'req, ..>` under the same attack | fail `E0521` |
 | E4b | candidate 2 still serves an ordinary handler | pass (baseline) |
+| **E5** | candidate 3 `RepoNoSend<'req, ..>` held **across** an `.await` in a handler | fail `future cannot be sent between threads` — **the cost** |
+| **E5b** | the same `!Send` handle used and dropped **before** the await | **pass = the porousness** |
 | **F1** | `ctx.spawn::<Job>` with the child borrowing the parent | fail `E0521` |
 | F2 | candidate: an **owned** `JobCtx<J>` | pass — baseline + runtime |
 | F3 | that `JobCtx` re-spawned from inside the job | **pass = the cost** (baseline) |
@@ -244,13 +246,50 @@ which is a choice, not a constraint. Note this is measured for **http1 only**;
 http2 additionally requires `S::Future: Send + 'static` — and that bound comes
 from `hyper_util`'s `TokioExecutor`, **not** from hyper's http2 builder.
 
-### #39 — confirmed by execution
+### #39 — confirmed by execution, and **decided** (ADR-0005, 2026-08-17)
 
 `Repo<D, R, M>` as specified has no lifetime parameter, so it cannot borrow and
 must own its access, so it is `'static`. E1 spawns a task holding one, returns
 the response, and the store still reads `before@example.com`; 150 ms later it
 reads `escaped@example.com`. Both candidates block the attack (E2/E4a) and both
 still serve an ordinary handler (E3/E4b).
+
+**Decision**: the handle carries `'req` as its first parameter —
+`Repo<'req, D, R, M>`. Both candidates already had that; they differ only in the
+internal field, and *that* is #40's, because `JobCtx` holds the store directly
+(F3). Ledger **path 24**, closed. The fixture is
+`crates/verum/tests/ui/compile_fail/repo_handle_cannot_outlive_its_request.rs`.
+
+**`!Send` was measured and rejected** (E5 / E5b) — **both rows are compile-only**;
+neither is in `tests/live.rs`, so nothing about them is "confirmed by execution".
+
+E5b carries the rejection: the same handle used and dropped *before* the await
+compiles, mutation included, because `+ Send` reaches only what the future holds
+**across** an await. So `!Send` would make the rule depend on where the `.await`
+sits rather than on what the handle may do.
+
+E5's "and it costs ordinary use" is **narrower than first written**. `Handler::handle`
+does return `impl Future + Send`, but the argument "in the real design the setters
+are `async`, so a handler must hold the handle across an await" rests on a design
+that does not exist — and the capability-checked extension trait is specified
+**synchronous** in `persistence.md`, `mutation-contract.md` and `rust-type-model.md`.
+Here the handle's methods are synchronous too, so E5's across-await hold comes from
+an inserted `yield_now().await`. E5 measures a language fact about any `!Send`
+value, not a cost specific to this handle. **未検証** on that half.
+
+**RK-017's await-scope half fires here for the second time** (#14's `+ Send`, now
+E5b). The other half — "a bound constrains a type, not who supplies it", #15's
+getter — is a *different* mechanism, and E5/E5b measure nothing about who supplies
+anything; #54 owns splitting them. The **producer-side** asymmetry #39's review found
+(`PhantomData` lets an emitter mint any lifetime, a real borrow does not) is that
+other half, and it is unprobed here — see ADR-0005.
+
+> **What #14 could not see.** #14's acceptance criteria (a)(b)(c) **all passed while
+> path 24 was wide open**, because the escape leaves field-granular checking intact
+> — an escaped handle still cannot touch an undeclared field. It is scope escape, not
+> capability forgery, and no criterion phrased in terms of forgery detects it. Any
+> future criterion for containment has to name **what the contained thing hands out**,
+> not only the thing itself.
 
 ### #40 — the promised alternative, and what the working one costs
 

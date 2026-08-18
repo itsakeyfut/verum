@@ -754,6 +754,128 @@ pub fn e2_lifetime_handle_escapes(
     })
 }
 
+// ---------------------------------------------------------------------------
+// E5 / E5b — should the handle **also** be `!Send`? (#39 asks to decide this
+// "while here".)
+//
+// `'req` already blocks the escape (E2 / E4a). These two measure what `!Send`
+// would add on top, and what it costs. They are a pair on purpose: E5 is the
+// cost and E5b is the porousness, and either alone reads as an argument for the
+// opposite conclusion.
+// ---------------------------------------------------------------------------
+
+/// E5 — **the cost.** A `!Send` handle held across an `.await` inside a handler
+/// whose future must be `Send`.
+///
+/// `Handler::handle` returns `impl Future<..> + Send` (`fw/src/erase.rs:29`)
+/// because hyper's multi-thread runtime requires it. In the real design `find`
+/// and the setters are `async`, so an ordinary handler *must* hold the handle
+/// across an await — which means `!Send` does not restrict an attacker, it
+/// rejects the normal case.
+#[cfg(feature = "e5-nosend-across-await")]
+pub struct NoSendRepoEndpoint;
+
+#[cfg(feature = "e5-nosend-across-await")]
+impl Endpoint for NoSendRepoEndpoint {
+    type Reads = ();
+    type Mutates = ();
+}
+
+#[cfg(feature = "e5-nosend-across-await")]
+impl Handler for NoSendRepoEndpoint {
+    type Req = Req;
+    type Res = String;
+
+    fn decode(_: &[u8]) -> Result<Req> {
+        Ok(Req {
+            id: 1,
+            email: String::new(),
+        })
+    }
+
+    fn encode(res: String) -> Vec<u8> {
+        res.into_bytes()
+    }
+
+    fn handle<'req>(
+        &self,
+        _req: Req,
+        ctx: Ctx<'req, Self>,
+    ) -> impl Future<Output = Result<String>> + Send {
+        async move {
+            let repo = ctx.users_nosend();
+            // The await is what drags the handle into the future's state.
+            tokio::task::yield_now().await;
+            let user = repo.find(1)?;
+            Ok(user.email().to_owned())
+        }
+    }
+}
+
+// E5's item, pinned on the SAME feature as the probe row. Review re-pointed the
+// row's `--features` at `a3-non-send-body` — whose needle is byte-identical — and
+// the row still read "as specified" with `NoSendRepoEndpoint` never compiled.
+#[cfg(feature = "e5-nosend-across-await")]
+const _: () = {
+    let _ = <NoSendRepoEndpoint as Handler>::handle;
+};
+
+/// E5b — **the porousness.** The same `!Send` handle, used and dropped *before*
+/// the await, compiles — **and mutates.**
+///
+/// Not feature-gated on purpose. As a `pass` probe row its only needle was
+/// `Finished`, which every pass row emits, so re-pointing the row at another
+/// feature left it green with this endpoint never compiled (#39's review).
+/// Compiling unconditionally *is* the "it compiles" half, and
+/// `tests/live.rs::e5b_nosend_handle_mutates_before_the_await` is the other half —
+/// gutting the body now fails an assertion instead of passing a row.
+///
+/// This is RK-017's shape again: `+ Send` on the returned future reaches only
+/// what the future holds **across** an await. So `!Send` is not a containment
+/// bound either — it makes the rule depend on where the `.await` sits rather
+/// than on what the handle is allowed to do.
+pub struct NoSendBeforeAwaitEndpoint;
+
+impl Endpoint for NoSendBeforeAwaitEndpoint {
+    type Reads = ();
+    type Mutates = ();
+}
+
+impl Handler for NoSendBeforeAwaitEndpoint {
+    type Req = Req;
+    type Res = String;
+
+    fn decode(_: &[u8]) -> Result<Req> {
+        Ok(Req {
+            id: 1,
+            email: String::new(),
+        })
+    }
+
+    fn encode(res: String) -> Vec<u8> {
+        res.into_bytes()
+    }
+
+    fn handle<'req>(
+        &self,
+        _req: Req,
+        ctx: Ctx<'req, Self>,
+    ) -> impl Future<Output = Result<String>> + Send {
+        async move {
+            // Mutating through the `!Send` handle, then dropping it before the
+            // await. The effect has already happened.
+            let email = {
+                let repo = ctx.users_nosend();
+                let mut user = repo.find(1)?;
+                repo.set_email(&mut user, "nosend@example.com".to_owned())?;
+                user.email().to_owned()
+            };
+            tokio::task::yield_now().await;
+            Ok(email)
+        }
+    }
+}
+
 /// E3 — and candidate 1 still serves an ordinary handler.
 ///
 /// Without this, E2's rejection could just mean the candidate is unusable.
