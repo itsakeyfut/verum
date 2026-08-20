@@ -107,8 +107,23 @@ case compiles, that is a hole in the spec.
 > closed here or recorded in `unverified-boundaries.md` and emitted in the AI
 > Context.** A route may not be absent from both.
 >
-> Other routes are argued to be open and are **not yet recorded**; #44 is where
-> that is settled. Until it lands, this file states only what the ledger states.
+> **#44 settled the rest, and three of them moved.** Ledger paths **26** (a derive
+> the user attaches), **27** (the user's own `dyn` erasure over `Repo`) and **28**
+> (an interior-mutable field type, written through `&self`) are now recorded and
+> emitted, and paths **5** and **11** dropped from "Closed in the First PoC" to
+> **Stated** — both had remedies that cannot be enforced. So this file and the
+> ledger agree again. **#18** is what removed this file's side of that contradiction
+> (its closing paragraph had asserted path 11 could not be closed while the ledger
+> still called it closed); #44 removed the ledger's side by downgrading the row. An
+> earlier version of this note credited both to #44.
+>
+> **A row worth adding to the table above once `#[domain]` exists**: rejecting
+> `Default` / `Clone` / `Deserialize` on a Domain is a **lint**, not a guarantee —
+> `#[domain]` cannot see a derive written above it, so the check reaches one
+> position out of two ([ADR-0015](../adr/0015-remedies-state-what-they-do-not-reach.md),
+> measured as P42 / P46). The `compile_fail` fixture for the position it *does*
+> reach belongs with `T-M2-04`, and #44 relocated it there rather than writing a
+> fixture against a macro that does not exist.
 
 ### Update `.stderr` deliberately
 

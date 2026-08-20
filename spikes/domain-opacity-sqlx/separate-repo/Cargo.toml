@@ -27,6 +27,9 @@ p14-projection = ["app/p14-hidden-module-repr"]
 p15-forge-via-select = ["app/p10-pub-repr"]
 # P41: the same route through `serde::Deserialize`. No database at all.
 p41-forge-via-json = ["app/p41-repr-deserialize"]
+# --- #44: paths 26 and 28, from the crate boundary the paths name ---
+p43-forge-via-derive = ["app/p43-keep-shape-same-module"]
+p45-mutate-through-shared-ref = ["app/p45-alias-interior-mutability"]
 # --- #33 ---
 p25-proof-forged-foreign = []
 p27-confined-foreign = []

@@ -63,7 +63,8 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
       "level": "upper_bound_checked",
       "scope": "handle_via_ctx",
       "voided_by": [
-        "domain_repr", "domain_swap", "repository_impl", "unscanned_effect",
+        "domain_repr", "domain_swap", "forged_derive",
+        "aliased_interior_mutability", "repository_impl", "unscanned_effect",
         "middleware", "constructor_body", "malformed_set",
         "upsert_granularity", "event_subscriber"
       ]
@@ -172,7 +173,19 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
       { "kind": "domain_swap", "detail": "*user = other_user cannot be closed (path 2)",
         "permanent": true },
       { "kind": "repository_impl", "detail": "SQL inside a repository implementation is unchecked",
-        "location": "src/repositories/user.rs", "permanent": false }
+        "location": "src/repositories/user.rs", "permanent": false },
+      { "kind": "forged_endpoint", "detail": "at M2 the derive must emit `impl Endpoint for X`, so its seal is nameable downstream and proc-macro output is indistinguishable from hand-written code. A forged Endpoint declares any Domains \u2014 and any Reads / Mutates / Creates / Deletes / Emits / Calls, so it dominates forging Includes. Confined to the crate owning the endpoint type (E0117) and cannot widen one the derive already emitted (E0119); the emission shape is #60's (path 12)",
+        "permanent": true },
+      { "kind": "forged_field", "detail": "Field::NAME is per-field data, so the derive must emit one impl per field and must name the seal \u2014 the blanket shape that closes path 13 cannot apply. Forging NAME forges a column name in generated SQL (path 14)",
+        "permanent": true },
+      { "kind": "forged_derive", "detail": "a derive the user attaches hands out a Domain with no capability (Default / Deserialize / mem::take / Clone). Rejecting it is a lint: #[domain] cannot see a derive written above it. What closes this is ADR-0010's macro-owned child module, chosen for path 21 (path 26)",
+        "location": "src/domain/user.rs", "permanent": false },
+      { "kind": "mintable_repository", "detail": "the repository ADR-0010 generates beside the Domain is a `pub` unit struct with no state, so any crate constructs one and calls it with its own pool \u2014 the Domain that comes back is legitimately built and every field is the caller's. This is path 21's checked alternative, so closing 21 without binding acquisition to the Ctx moves the route rather than removing it (path 29)",
+        "location": "src/domain/user.rs", "permanent": false },
+      { "kind": "dyn_erasure", "detail": "the user's own object-safe trait implemented for Repo<'req, D, R, M> \u2014 one blanket impl covers every capability shape \u2014 then passed as &dyn, so D/R/M vanish downstream. The trait is the user's, so there is nothing to seal (path 27)",
+        "permanent": true },
+      { "kind": "aliased_interior_mutability", "detail": "a field-type whitelist reads tokens, so `type AuditTrail = RefCell<Vec<String>>` passes it, and the mutation goes through the &self getter \u2014 available where Mutates = () (path 28)",
+        "location": "src/domain/order.rs", "permanent": false }
     ]
   }
 }
@@ -239,7 +252,7 @@ The assignment per key, derived from what each key actually claims:
 | Key | `level` | `scope` | `voided_by` |
 |---|---|---|---|
 | `reads` | `metadata_only` | `none` | `not_applicable` |
-| `mutates` | `upper_bound_checked` | `handle_via_ctx` | 9 kinds |
+| `mutates` | `upper_bound_checked` | `handle_via_ctx` | 11 kinds |
 | `creates` / `deletes` | `upper_bound_checked` | `handle_via_ctx` | 6 kinds |
 | `unconditional` / each `conditional` entry | `upper_bound_checked` | `handle_via_ctx` | 6 kinds |
 | `forbidden` | `intent_only` | `declaration_only` | `not_applicable` |
@@ -423,10 +436,18 @@ times** (#6 / #8 / #9), and one review added four more entries. This is the
 `escape_hatches` treatment (§7) applied to the list as a whole rather than to a
 single value.
 
-**Each entry's `kind` is what `enforcement.voided_by` names** (§1). The set of
-kinds emitted here and the set named across every `voided_by` must agree; that
-agreement is checked mechanically by `spikes/doc-code-blocks/check_json.py`, not
-promised.
+**Each entry's `kind` is what `enforcement.voided_by` names** (§1), and the join is
+checked **in one direction only**: every name in a `voided_by` must be a `kind` the
+ledger emits (`spikes/doc-code-blocks/check_json.py`). The other direction does not
+hold — `condition_body`, `row_scope`, `uncapped_read`, `forged_endpoint`,
+`forged_field` and `dyn_erasure` are named by no `voided_by`, so for the keys they
+void a reader who stops at `enforcement` comes away believing the guarantee is
+unconditional. Which keys each of them voids is a design question, not a copy edit,
+and it is tracked in
+[`unverified-boundaries.md`](./unverified-boundaries.md) §How progress is measured.
+An earlier version of this paragraph said the two sets "must agree" and that the
+agreement was mechanical — both halves were false, and it survived the change that
+wrote the corrected version into the ledger.
 
 **This output mechanism is implemented from the First PoC.** Added later, it would
 mean every AI Context up to that point had been lying.

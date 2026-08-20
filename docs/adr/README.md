@@ -32,15 +32,16 @@ Format: [MADR 4.0](https://adr.github.io/madr/). Copy
 | [0012](./0012-spawn-takes-a-payload-not-a-context.md) | `ctx.spawn` takes a **payload**, not a context | accepted | `spikes/ctx-lifetime-rpitit` F1–F6 — the specified shape is `E0521`, the owned form compiles but can be re-spawned, and the chosen form is `E0521` against both re-spawning and payload smuggling. ⚠️ No fixture in `crates/verum` yet — there is no `Ctx` there; relocated to #60 / `T-M3-02` |
 | [0013](./0013-includes-is-a-blanket-impl.md) | `Includes` is a blanket impl, so its seal never becomes derive-facing | accepted | `spikes/seal-after-m2` S1–S5 — the per-domain seal is forged from a downstream crate once M2 exposes it (S2), **and the ledger's own re-verification procedure is green on that tree** (S1). ⚠️ #41's stated reason is refuted by S4; the blanket impl works because the derive stops *naming* the seal. Not implemented in `crates/verum` — needs `Endpoint` (#60) |
 | [0014](./0014-syntactically-present-replaces-observed.md) | `syntactically_present` replaces `observed`, and the lower bound is abandoned | accepted | `spikes/contract-from-tokens` D1/D2 — dead code is counted by **both** bounds (`if false` appears in the scan **and** still needs its `Has` bound), so the CI gate's difference is empty for it. Three names change; the `voided_by` join in `check_json.py` makes the rename mechanical |
+| [0015](./0015-remedies-state-what-they-do-not-reach.md) | Every ledger cause states what its remedy does not reach; `#[domain]`'s forbidden-derive check is a lint | accepted | `spikes/domain-opacity-sqlx` — **P46** (the check works below the attribute), **P42** (it is blind above it, needled on the *absence* of verum's wording), **P43/P44** (placement is the mechanism; P44 mutation-verified), **P45** (path 28 run-verified). `spikes/ctx-lifetime-rpitit` **G1–G4** against the shipped `Repo`, G4 the control. `check_json.py`'s enumeration rules, five plants confirmed red. ⚠️ The never-blank column itself has **no guard** — it is a review rule |
 
 > **Statuses live in two places** — an ADR's frontmatter and this row. #34 updated
 > only the frontmatter and #39 repeated it, so before closing an ADR run
 > `command grep -n '<number>' docs/adr/README.md` and check the row, the
 > **By status** line, and any note below.
 
-**By status** — proposed: **0004, 0006, 0007** · accepted: 0000–0003, 0005, 0008–0014 · superseded: none
+**By status** — proposed: **0004, 0006, 0007** · accepted: 0000–0003, 0005, 0008–0015 · superseded: none
 
-> **Five `proposed` records, and the codebase relies on all five.** That is the
+> **Three `proposed` records, and the codebase relies on all three.** That is the
 > state [ADR-0000](./0000-record-architecture-decisions.md) calls a defect, made
 > visible rather than fixed. Each names the issue that settles it: #39 (with #40),
 > path 9, path 14. **0004 is measured but not settled** — #15 showed the mechanism

@@ -38,14 +38,14 @@ Tags follow rustdoc, so GitHub renders the documents unchanged:
 ## Current state
 
 ```
-218 blocks
+228 blocks
   compile_fail   54    every one verified to actually fail, every run
-  ignore        131    fragment / needs an M2 macro / needs an absent crate /
+  ignore        139    fragment / needs an M2 macro / needs an absent crate /
                        verum-internal / body elided / module without its imports
-  ok             33
+  ok             35
   remaining       0
 
-15 json samples, 11 ledger kinds, 0 violations
+16 json samples, 18 ledger kinds, 0 violations
 ```
 
 Both directions are guarded, and both were demonstrated by breaking them:

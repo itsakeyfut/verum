@@ -80,19 +80,24 @@ echo
 # UNEXPECTED rows on its second run (measured). A harness whose answer depends on
 # cache state is not one anybody can use to re-check a verdict.
 # ---------------------------------------------------------------------------
-probe() {
-    local id="$1" expect="$2" needle="$3"
-    shift 3
+# One judgement, used by both entry points. They were 22 of 24 lines identical,
+# which is RK-016 rule (b)'s shape — a hand-copied guard whose original gets fixed
+# and whose copy does not. `probe_absent` now differs only in its arguments.
+_judge() {
+    local id="$1" expect="$2" needle="$3" forbidden="$4" got="$5" out="$6"
 
-    local out rc=0
-    out="$(cargo "$@" 2>&1)" || rc=$?
-
-    local got="pass"
-    [[ $rc -ne 0 ]] && got="fail"
+    # A guard whose needle is the empty string matches everything, so the row would
+    # judge nothing but the exit code. Measured in #44's review with a fake cargo.
+    if [[ -z "$needle" ]]; then
+        printf 'FATAL: probe %s has an empty needle — it would judge only the exit code.\n' "$id" >&2
+        exit 1
+    fi
 
     local reason="ok"
     if ! grep -qF -- "$needle" <<<"$out"; then
         reason="MISSING(\"$needle\")"
+    elif [[ -n "$forbidden" ]] && grep -qF -- "$forbidden" <<<"$out"; then
+        reason="PRESENT(\"$forbidden\") — the check fired after all"
     fi
 
     if [[ "$got" == "$expect" && "$reason" == "ok" ]]; then
@@ -103,6 +108,49 @@ probe() {
         fail=$((fail + 1))
         sed 's/^/       | /' <<<"$out" | grep -E '^\s+\| (error|warning)' | head -6 || true
     fi
+}
+
+# probe <id> <expect pass|fail> <required substring> <cargo args...>
+#
+# The required substring is the error code for a rejection, or `Finished` for an
+# acceptance. It is what separates "rejected for the reason under test" from
+# "rejected" — P7 and P9 were both scored UNEXPECTED by it on the first run,
+# because the codes I had predicted were wrong.
+#
+# `Finished` and not `Checking <crate>`: cargo only says `Checking` on a cold
+# build, so the cold-cache version of this harness reported three spurious
+# UNEXPECTED rows on its second run (measured). A harness whose answer depends on
+# cache state is not one anybody can use to re-check a verdict.
+probe() {
+    local id="$1" expect="$2" needle="$3"
+    shift 3
+    local out rc=0
+    out="$(cargo "$@" 2>&1)" || rc=$?
+    local got="pass"
+    [[ $rc -ne 0 ]] && got="fail"
+    _judge "$id" "$expect" "$needle" "" "$got" "$out"
+}
+
+# probe_absent <id> <expect> <required substring> <FORBIDDEN substring> <cargo args...>
+#
+# For the rows whose finding is "it was rejected, but NOT by the check under
+# test". Presence alone cannot express that: P42 expects `E0119` *and* expects
+# verum's layer-1 wording to be missing, and a version that only needled on
+# `E0119` would stay green if both appeared — i.e. if the name-based check started
+# reaching the position it cannot see. The row would then report "the check is
+# blind" while measuring the opposite.
+probe_absent() {
+    local id="$1" expect="$2" needle="$3" forbidden="$4"
+    shift 4
+    if [[ -z "$forbidden" ]]; then
+        printf 'FATAL: probe_absent %s has an empty forbidden needle — it checks nothing.\n' "$id" >&2
+        exit 1
+    fi
+    local out rc=0
+    out="$(cargo "$@" 2>&1)" || rc=$?
+    local got="pass"
+    [[ $rc -ne 0 ]] && got="fail"
+    _judge "$id" "$expect" "$needle" "$forbidden" "$got" "$out"
 }
 
 # ---------------------------------------------------------------------------
@@ -282,6 +330,67 @@ probe P36 pass 'Finished' check -p app --features p36-trait-defeats
 probe P37 fail 'cannot authorise constructing a Domain value' check -p app --features p37-proof-wording
 echo
 
+echo "=== #44 — the derives the USER attaches, and the insides of a field type ==="
+echo "  ledger paths 26 and 28. Neither touches Repr, so neither is path 21, and"
+echo "  both cross a crate boundary."
+# P42 — the position the attribute cannot see. Rejected, but by a SHAPE mismatch:
+# the derive's generated code names fields `#[domain]` replaced with a newtype.
+# The absent-needle is what makes this row mean "the check never ran".
+probe_absent P42 fail 'E0119' 'cannot be derived on a Domain' \
+    check -p app --features p42-derive-above-attribute
+# P47 — the same position, with the two spellings that defeated the name match:
+# a raw ident and an aliased import. Both are `E0119`, because coherence does not
+# read names. This is what stops the ledger describing the check as the defence.
+probe P47 fail 'E0119' check -p app --features p47-spelling-independent
+# P48/P49 — `Copy`. Emitting `Clone` to close path 26 removed the incidental
+# `E0277` that had been stopping `Copy`, so closing two derives opened a third.
+# P49 is the structural half (`E0204`, any position); P48 is the only route that
+# gets past it, and it runs through the attribute's OWN argument list, where a
+# check is position-independent by construction.
+probe P48 fail 'cannot be forwarded to a Domain' check -p app --features p48-repr-copy-rejected
+probe P49 fail 'E0204' check -p app --features p49-copy-blocked-structurally
+# P50 — the residue: verum cannot name serde, so `Deserialize` has no collision
+# available and the lint is all there is. Added because narrowing
+# `FORBIDDEN_DERIVES` to `["Default"]` left the whole suite green.
+probe P50 fail 'cannot be derived on a Domain' check -p app --features p50-deserialize-below
+# P46 — the position it can see. #44's requirement 6, measured: the attribute form
+# CAN enforce read-contract.md's ban. The trybuild fixture belongs with the real
+# `#[domain]` (T-M2-04); this is what exists to be measured before it does.
+probe P46 fail 'cannot be derived on a Domain' check -p app --features p46-derive-below-attribute
+# P43/P44 — the pair that isolates the mechanism. Same shape, same derive, same
+# position; the only difference is whether the attribute emits into a macro-owned
+# child module. P43 compiles AND RUNS the forgery from a foreign crate; P44 is the
+# same source rejected. So the closing mechanism is PLACEMENT — not the check (P42)
+# and not the newtype shape (P43 keeps the fields and still forges).
+probe P43 pass 'VERUM_P43_FORGED=attacker@example.com' \
+    test -p separate-repo --features p43-forge-via-derive --test derives -- --nocapture
+# `E0616` because `Clone` reads the field; with `Default` alone the same source is
+# `E0451` (construction). Both measured in place — the code varies with the derive,
+# as path 21's shape table already records for this class.
+probe P44 fail 'E0616' check -p app --features p44-keep-shape-confined
+# P45 — path 28. `type AuditTrail = RefCell<Vec<String>>` passes a name-based field
+# whitelist, and the mutation goes through `&self`, so it is available where
+# `Mutates = ()`. Built through its legitimate route: this is a correctly loaded
+# Domain whose contents a foreign crate changes through a shared reference.
+probe P45 pass 'VERUM_P45_AUDIT=written by a GET' \
+    test -p separate-repo --features p45-mutate-through-shared-ref --test derives -- --nocapture
+# P51/P53/P54/P52 — path 5's remedy, both horns and the way out, on the same input.
+# The ledger's remedy column said the closing mechanism was `Freeze`; that is wrong
+# in both directions, and these rows are what keep the replacement a measurement.
+# P51: an allow-list of permitted field-type names rejects the user's own value
+# object — too narrow, and unimplementable as specified.
+probe P51 fail 'is not an allowed Domain field type' check -p app --features p51-allowlist-too-narrow
+# P53: a deny-list of interior-mutable names ACCEPTS the alias. Too wide, in one
+# token. P54 is its control — written out, the same check does reject it.
+probe P53 pass 'Finished' check -p app --features p53-denylist-passes-alias
+probe P54 fail 'carries interior mutability' check -p app --features p54-denylist-catches-direct
+# P52: the same predicate emitted as a BOUND. `E0277`, because rustc resolves the
+# alias for the macro — which is why "a derive sees only tokens" kills the name
+# form and not the remedy. Its cost is that `Sync` also rejects `Rc`, and it does
+# not reach `Mutex`/atomics; `Freeze` does not reach `Arc<Mutex<..>>` either.
+probe P52 fail 'E0277' check -p app --features p52-bound-check-rejects-alias
+echo
+
 echo "=== does it actually work, not just type-check? ==="
 # The count, not just `ok`: `cargo test -p app` runs three targets and two of them
 # always report `test result: ok. 0 passed`, so the bare string matches even with
@@ -297,7 +406,7 @@ echo
 # The deleted-row guard. This spike predates it (#43's lesson, re-planted in
 # #48): without it, removing a `probe` line leaves the suite green with one less
 # thing measured.
-EXPECTED_ROWS=46
+EXPECTED_ROWS=59
 if [[ $((pass + fail)) -ne $EXPECTED_ROWS ]]; then
     printf 'FATAL: %d rows ran, expected %d — a probe line was removed.\n' "$((pass + fail))" "$EXPECTED_ROWS" >&2
     exit 1

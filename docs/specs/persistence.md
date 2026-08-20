@@ -232,7 +232,7 @@ pub use __verum_user::{User, UserRepository};
 | The domain declared at the **crate root** | P32 | **`E0624`** |
 | `as_repr`, the read half | P34 | **`E0624`** |
 | A `Debug` leak through the `Repr` | P35 | **`E0624`** — no accessor hands one out |
-| A foreign crate | P27 | **`E0624`** |
+| A foreign crate | P27 | **`E0624`** — for the **constructor**. ⚠️ **Not for the repository**: the same listing re-exports it as a `pub` unit struct, so a foreign crate mints one and calls it with its own pool, receiving a Domain whose fields it chose (ledger **path 29**, run-verified). P27 measures `from_repr` and nothing measured this until #44's review |
 
 **Confining it to the *user's* module instead is not enough**, and that was this
 spec's first answer. Two holes, both measured: a helper written beside the user's

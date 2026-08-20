@@ -23,7 +23,7 @@
 # from its `members`.
 [workspace]
 resolver = "3"
-members = ["fw", "app"]
+members = ["fw", "app", "downstream"]
 
 [workspace.package]
 edition = "2024"

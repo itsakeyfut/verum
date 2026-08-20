@@ -120,6 +120,17 @@ jobs:
       - run: cargo doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+      # The AI Context schema is spread across six spec files that must agree key
+      # for key, and this is what makes the agreement mechanical (ADR-0008,
+      # ADR-0015). It was reachable only by running `spikes/doc-code-blocks/run.sh`
+      # by hand, and #41's drift — two entries added to one sample and not the
+      # other — survived five PRs precisely because nobody did. Standard library
+      # only, no cargo, so it belongs here rather than in a spike nobody runs.
+      #
+      # The rest of that spike stays out: it compiles the extracted code blocks and
+      # needs the toolchain and a cache, which is the reason recorded in its README.
+      - name: AI Context schema agreement
+        run: python3 spikes/doc-code-blocks/check_json.py
 
   # --------------------------------------------------------------------------
   # Module boundary — where a forbidden crate may be named in the source at all.

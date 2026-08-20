@@ -454,6 +454,23 @@ impl<'req, E: Endpoint> CtxUsers for Ctx<'req, E> {
 On an endpoint with `Mutates = ()` (a GET), the setter's where clause is
 unsatisfied, so calling it is a compile error.
 
+> **What this reaches is the setter.** A mutation that never calls one is outside
+> it: if a domain field's type is interior-mutable, `&self` is enough, and a getter
+> returning `&RefCell<..>` lets a foreign crate change the Domain's contents inside
+> a GET with no `&mut` and no capability anywhere. Nothing is forged — it is a
+> correctly loaded Domain. Ledger **path 28** (#44, run-verified, probe P45), whose
+> remedy was "restrict domain field types" and which a **name** check cannot deliver
+> either way: an allow-list turns away the user's own value objects (P51), a
+> deny-list is bypassed by one type alias (P53). ⚠️ **`Freeze` is not the closing
+> mechanism** — `Arc<Mutex<..>>` satisfies it. What *is* available today is emitting
+> the predicate as a **bound**, which makes rustc resolve the alias and closes
+> `Cell`/`RefCell` (P52) at the cost of forbidding `Rc`, and does not reach
+> `Mutex`/atomics. The full table is in the ledger.
+>
+> [`unverified-boundaries.md`](./unverified-boundaries.md) §The exact scope of "a
+> GET is read-only" already narrows this guarantee to the handler scope. Path 28
+> narrows it again, *inside* that scope.
+
 ---
 
 ## A side benefit: the architecture contract holds at the same time
@@ -485,13 +502,28 @@ let svc = UserUpdateService::new(Arc::new(repo) as Arc<dyn UserRepository>);
 `Repo<'req, D, R, M>`, and the service itself carries the capabilities in its type as
 `Service<Reads, Mutates>`.
 
+> **⚠️ Verum not exposing it is not the same as it not happening** (#44,
+> compile-verified against the shipped `verum::Repo`). The user defines their **own**
+> object-safe trait, implements it for `Repo<'req, D, R, M>` — a single blanket impl
+> covers every capability shape — and passes `&dyn`. A local trait with a foreign
+> `Self` passes the orphan rule, so there is nothing to seal and no export to
+> withhold — and making `Repo` unnameable would not help either, because
+> `impl<T> Svc for T {}` never names it and a `&dyn Fn()` closure needs no trait at
+> all (both compile-verified). Ledger **path 27**,
+> probes G1–G3 in `spikes/ctx-lifetime-rpitit`. It does **not** defeat `'req` (G4),
+> so this is capability erasure and not scope escape.
+>
+> The sentence above is what verum does, and it stands. What it is not is a
+> guarantee that the erasure cannot happen — path 11 read "Closed in the First PoC"
+> on the strength of exactly that conflation until #44.
+
 ---
 
 ## What falls out of this design
 
 | Item | How it holds |
 |---|---|
-| A GET's read-only guarantee | `Mutates = ()` → the setter's where clause is unsatisfied |
+| A GET's read-only guarantee | `Mutates = ()` → the setter's where clause is unsatisfied. ⚠️ **Only where a setter is reached** — path 28 writes through a `&self` getter instead (above) |
 | MustNotMutate | Holds naturally as "no capability is issued for that field" |
 | Field-level mutation | The domain is opaque and only per-field setters are provided |
 | Restricting the read scope | The projection type is parameterised by `E::Reads` (Full PoC) |

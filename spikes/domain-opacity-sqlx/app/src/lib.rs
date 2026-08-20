@@ -2,6 +2,7 @@
 //! implementation, and ordinary handler code, all in one crate. That is the
 //! common shape, and it is the shape under which `pub(crate)` is widest.
 pub mod confined;
+pub mod derives;
 pub mod domain;
 pub mod handler;
 pub mod nested;
@@ -105,7 +106,7 @@ pub struct Adr0010Attr {
 #[cfg(feature = "p39-adr0010-from-attribute")]
 pub fn p39_uses_the_expansion() -> String {
     Adr0010AttrRepository
-        .load("db@example.com")
+        .load("db@example.com".to_owned())
         .email()
         .to_owned()
 }
@@ -153,7 +154,7 @@ pub mod p39e_elsewhere {
 #[cfg(feature = "p39c-legitimate-route")]
 pub fn p39c_legitimate() -> String {
     Adr0010AttrRepository
-        .load("alice@example.com")
+        .load("alice@example.com".to_owned())
         .email()
         .to_owned()
 }

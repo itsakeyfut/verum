@@ -1,7 +1,7 @@
 # T-M1-01 / #13 — Domain opacity × sqlx, extended by #33
 
 ```
-rustc 1.97.1 · sqlx 0.9.0 · SQLite · 44 probes · 148 packages (4 members + 144 deps)
+rustc 1.97.1 · sqlx 0.9.0 · SQLite · 59 probes · 148 packages (4 members + 144 deps)
 ```
 
 **Read the probe table. Everything else here is one sentence per row.**
@@ -118,8 +118,28 @@ Recorded as [ADR-0010](../../docs/adr/0010-domain-constructor-confined-by-module
 | **P39b** | the forgery ADR-0010 exists to reject | fail | `E0624` |
 | **P39d** | naming the `Repr` from outside the module | fail | `E0422` — "module-private: paths 3/4 shut with it" |
 | **P39c** | the generated repository's legitimate route | pass | ARK-002's checked alternative |
+| **#44 — the derives the USER attaches (path 26), and the insides of a field type (28)** | | | |
+| **P42** | a forbidden derive written **above** `#[domain]` | fail | **`E0119`** — the attribute emits its own `Default`/`Clone`, so the user's derive collides. Verum's layer-1 message is absent, and the row needles on that absence |
+| **P47** | the same position, as `r#Default` and as an aliased import | fail | `E0119` ×2 — **coherence reads neither position nor spelling.** Both spellings had defeated the name check |
+| **P46** | the same derive written **below** it | fail | verum's layer-1 wording. The one position the name check reaches |
+| **P50** | `#[derive(serde::Deserialize)]` below it | fail | verum's wording. Added because narrowing `FORBIDDEN_DERIVES` to `["Default"]` left the whole suite green |
+| **P48** | `#[domain(repr_derive(Clone, Copy))]` | fail | verum's wording, from the attribute's **own argument list** — the one place a derive check is position-independent |
+| **P49** | `#[derive(Copy)]` above, no `repr_derive(Copy)` | fail | `E0204` — structural. `Copy` names no field, so **placement does not reach it**, which is what bounds P43/P44's conclusion |
+| **P43** | shape-preserving `#[domain]`, same module, derive above — forged from a **foreign crate** and run | pass | `serde_json::from_str` + `clone` + `mem::take`, all with attacker-chosen values |
+| **P44** | the same source with the struct in a **macro-owned child module** | fail | `E0616` (`Clone` reads the field); with `Default` alone the same source is `E0451`. **Placement is the mechanism** |
+| **P45** | an interior-mutable field mutated through `&self` from a foreign crate | pass | no `&mut` and no capability anywhere, on a **correctly loaded** Domain |
+| **P51** | path 5's remedy as an **allow-list** of field-type names | fail | it rejects `Email`, the user's own value object — "too narrow" is immediate, not a risk |
+| **P53** | the same remedy as a **deny-list** | pass | `type Audit = RefCell<..>` passes. One alias, one token |
+| **P54** | P53's control: the type written out | fail | the deny-list does work when it can see the name |
+| **P52** | the same predicate emitted as a **bound** | fail | `E0277` — **rustc resolves the alias for the macro.** This is why "a derive sees only tokens" kills the *name* form and not the remedy |
 
-`bash run.sh` → `result: 44 as specified, 0 unexpected`, on 1.97.1 and on nightly 1.99.
+`bash run.sh` → `result: 59 as specified, 0 unexpected`, on 1.97.1 and on nightly 1.99.
+
+> The count in the fence at the top of this file said **44** while `run.sh` expected
+> **46**, and nothing compared them. That is the same class as `EXPECTED_ROWS`
+> itself — a number in prose doing a job the harness should do — and it is why the
+> P42–P46 rows below are described by what they measure rather than by how many
+> there are. Mechanising the comparison is #73's.
 
 **Run it on an otherwise idle checkout.** Review hit a spurious `UNEXPECTED` row
 twice, from two independent reviewers, when a second `cargo` (an IDE checker) held
@@ -138,6 +158,15 @@ argued.
 **Mutation-verified**, not merely observed: `pub(crate)` on `from_repr` turns P26
 red, on `SecretRepr` turns P30 red, and on the derive-owned constructor turns
 **P31** red. Review independently killed all nine of round 1's probes.
+
+#44's five rows were each planted before being trusted:
+
+| Mutation | Result |
+|---|---|
+| P44's attribute swapped for the same-module form | **red** — so the row measures placement, not the shape |
+| P42's derive moved below the attribute | **red** (`E0560` gone) |
+| P42's forbidden-needle pointed at a string that *is* present | **red**, `PRESENT(..) — the check fired after all`. Both halves of `probe_absent` exercised, since the first mutation only exercised one |
+| P43's and P45's test bodies emptied | **both red** — the needles are values only the routes can produce |
 
 **Three of round 1's probes could not fail and were cited as confirmation anyway.**
 P27 restates P5's wall (the `Repr`'s visibility); P28 and P29 compile unchanged if
