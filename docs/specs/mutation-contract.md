@@ -310,6 +310,13 @@ ctx.users().set_id(&mut user, other_id)?;
 
 ---
 
+> **The private-field shape above is what ledger path 26 breaks out of.** A derive
+> the *user* attaches — `Default` / `Clone` / `Copy` / `Deserialize` — hands out a
+> Domain with no capability, from a foreign crate, without touching `Repr`. What
+> closes most of it is the conflicting impl `#[domain]` emits plus ADR-0010's module
+> placement, not the field privacy this section describes
+> ([path 26](./unverified-boundaries.md), [ADR-0015](../adr/0015-remedies-state-what-they-do-not-reach.md)).
+
 ## The semantics of `forbidden`
 
 > The point the Q-C experiment flagged: "`forbidden`'s specification was not in the

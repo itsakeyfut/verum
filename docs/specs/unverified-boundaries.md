@@ -35,11 +35,26 @@ This file enumerates every route and tracks its state.
 
 Closing routes individually is whack-a-mole. The causes reduce to three.
 
-| Cause | Routes | The structural response |
-|---|---|---|
-| **1. The domain model is exposed as an ordinary Rust struct** | Direct assignment / `into_owned` / a `Debug` leak / interior mutability / **construction and reading through `Repr` (path 21)** | Make the domain opaque, reachable only through capability-checked accessors. **But opacity alone is not enough** — the `Repr` generated for persistence opens a route alongside it (path 21). How it is narrowed is #33 / ADR-0010 |
-| **2. Nothing constrains the lifetime or route of a type that can carry a capability** | spawn / the test god-mode / a `when` leak / `dyn Repository` / a `PgPool` on the endpoint | Bind it to the request lifetime with `Ctx<'req, E>` and seal the construction route |
-| **3. Effects happen where no contract is required** | The far side of `emits` / middleware / a repository implementation / free-function constructors / `Condition::holds` | Increase the places that require a contract (in stages) |
+| Cause | Routes | The structural response | What the remedy does not reach |
+|---|---|---|---|
+| **1. The domain model is exposed as an ordinary Rust struct** | Direct assignment / `into_owned` / a `Debug` leak / interior mutability / **construction and reading through `Repr` (path 21)** | Make the domain opaque, reachable only through capability-checked accessors. **But opacity alone is not enough** — the `Repr` generated for persistence opens a route alongside it (path 21). How it is narrowed is #33 / ADR-0010 | derives the **user** attaches, in a position the attribute cannot see (**26**); the insides of a field's **type** (**28**). Opacity is a property of the Domain, and neither route goes through it |
+| **2. Nothing constrains the lifetime or route of a type that can carry a capability** | spawn / the test god-mode / a `when` leak / `dyn Repository` / a `PgPool` on the endpoint | Bind it to the request lifetime with `Ctx<'req, E>` and seal the construction route | the lifetime of what `Ctx` **hands out** (**24**) — containing the `Ctx` was measured not to contain its products. And a named `'req` in the `when` signature (**8**), which no bound rejects |
+| **3. Effects happen where no contract is required** | The far side of `emits` / middleware / a repository implementation / free-function constructors / `Condition::holds` | Increase the places that require a contract (in stages) | the user **removing** the requirement rather than escaping it — `dyn` erasure over a public handle (**27**). Adding places that require a contract does not reduce the places that do not |
+
+> **Never leave a cell in the last column blank**, and never write `—`. The rule is
+> [api-surface.md](../rules/api-surface.md) §2's, applied to the taxonomy: in #9 a
+> blank in the seal table pointed straight at where the hole was. #44 found four
+> paths at once, and **every one of them sat in the blind spot of a remedy** — which
+> is a property of cutting the causes by *remedy* rather than by boundary.
+>
+> **A fourth cause was proposed and is not adopted** — *a macro's authority is
+> bounded by its expansion form and position*. It is real, and #44's own analysis
+> shows it explains paths 21, 22, 13's M2 hole and 26. It is not a *cause* here
+> because it does not cover 24 or 27, so adopting it would re-cut the taxonomy by
+> mechanism and still leave two paths outside it. Where it lands instead is
+> [ADR-0015](../adr/0015-remedies-state-what-they-do-not-reach.md), sharpened by
+> what #44 measured: the bound is the attribute's **position**, not only its
+> expansion site.
 
 ---
 
@@ -49,12 +64,14 @@ Closing routes individually is whack-a-mole. The causes reduce to three.
 
 | # | Route | Response | State |
 |---|---|---|---|
-| 1 | `user.email = v`, direct assignment | Domain opacity (private fields) | **Closed in the First PoC** |
+| 1 | `user.email = v`, direct assignment | ~~Domain opacity (private fields)~~ → **the field is not private, it is gone from the type**, and the inner field sits in a module `#[domain]` owns ([ADR-0011](../adr/0011-domain-is-an-attribute-macro.md)); below | **Closed in the First PoC** — measured, P18 (`E0615`) / P4 (`E0616`). ⚠️ **The remedy as originally written was insufficient**, and the status was right for a reason the row did not give |
 | 2 | `*user = other_user` (fetch two with `find` and swap) | Restricting the construction route does not close it | **Stated** (below) |
 | 3 | Escaping a projection with `into_owned()` | **Not provided** | **Closed in the First PoC.** ⚠️ A derive on the `Repr` brings it back — the route's general form is [`../rules/api-surface.md`](../rules/api-surface.md) §8, `Clone` is this path's instance (see path 21). **Confined to the domain's own module** once the `Repr` carries no visibility modifier either (P30, ADR-0010) |
 | 4 | A data leak through `Debug` / `Serialize` | A custom implementation emitting declared fields only, derive-generated | **Closed in the First PoC.** ⚠️ The response is **imposed only on the domain side** — a derive on the `Repr` leaks from within the same crate ([`../rules/api-surface.md`](../rules/api-surface.md) §8; `Debug` is this path's instance, see path 21). **Confined to the domain's own module** once the `Repr` carries no visibility modifier: the name is unreachable, so there is no `Debug` to call (P30, ADR-0010) |
-| 5 | Mutation through interior mutability (`RefCell` / `Mutex` / `Cell`) | Restrict domain field types (a whitelist until `Freeze` stabilises) | **Closed in the First PoC** |
+| 5 | Mutation through interior mutability (`RefCell` / `Mutex` / `Cell`) | ~~Restrict domain field types (a whitelist until `Freeze` stabilises)~~ — a **name-based** whitelist cannot hold; a **bound-based** one reaches part of it and `Freeze` reaches less than was claimed; see path 28 | ⚠️ **Stated** (was "Closed in the First PoC"; #44). The mutation needs only `&self` — P45, run-verified |
 | 21 | **`User::from_repr(UserRepr { .. })` / `as_repr()` reachable from anywhere in the domain's crate** | The derive emits the `Repr`, the constructor **and** the repository into a **macro-owned private module** and re-exports the domain from it (#33 / [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)) | **Closed** for all user-written code — handler, service, a helper beside the user's own declaration, the crate-root layout, the read half, and foreign crates are all `E0624` (P31/P32/P34/P35/P27). ⚠️ **Conditional**: closed only while the conversion stays an *inherent* method — on a public trait it reopens completely (P36). Measured in T-M1-01 / #13 and #33; below |
+| 26 | **A derive the *user* attaches hands out a Domain, from a foreign crate.** `Default` invents one, `Deserialize` sets every field from a string, `mem::take(&mut u)` reinitialises through a `&mut` alone, `u.clone()` and `Copy` take a copy. **This is not path 21**: it never touches `Repr`, it crosses a crate boundary, and it survives any `Repr` redesign | **`#[domain]` emits the conflicting impl** for the traits verum can name, so the user's derive is `E0119` regardless of position or spelling; `Copy` is `E0204` unless `repr_derive(Copy)`, which is the attribute's own argument list. The layer-1 name check remains for `Deserialize` only ([ADR-0015](../adr/0015-remedies-state-what-they-do-not-reach.md)); below | ⚠️ **Stated, and the coverage is not uniform.** `Default` / `Clone`: closed (P42, P47). `Copy`: closed (P48, P49) — and it **became reachable because closing `Clone` supplied the bound `#[derive(Copy)]` needs**. `Deserialize`: **lint only** (P50) — verum has no serde dependency, so there is no impl to collide with, and the check is blind above the attribute and to any alias. Forged and read from a foreign crate wherever nothing closes it — P43, run-verified |
+| 28 | **A field type carries interior mutability and `&self` is enough to use it.** The mutation goes through the getter, so nothing is forged and no `&mut` is needed. A **name** check over field types cannot hold either way — an allow-list turns away the user's own value objects (P51), a deny-list is bypassed by one type alias (P53) | **Partly available, and not `Freeze`.** A whitelist emitted as a **bound** resolves the alias, because rustc does it; that closes `Cell` / `RefCell` today at the cost of also forbidding `Rc`. It does **not** reach `Mutex` / `RwLock` / atomics, nor `Arc<Mutex<..>>` behind an indirection. Below | ⚠️ **Stated.** Compile- and run-verified from a foreign crate through a **correctly loaded** Domain — P45. ⚠️ Because `&self` suffices it is available where `Mutates = ()`, so [`capability-system.md`](./capability-system.md)'s read-only guarantee does not reach it |
 
 > **Numbers are only ever appended, never renumbered.** Paths 12 / 13 / 14 are
 > referenced from [`../rules/api-surface.md`](../rules/api-surface.md),
@@ -114,7 +131,7 @@ the same constraint already recorded for `E0615` / `E0609` below.
 
 | Axis | Which is worse |
 |---|---|
-| Freedom of values | **21.** Path 2 (`*user = other_user`) can only insert values `find` actually returned, whereas 21 can **invent** them. Its preconditions are lighter too (no capability, no `find` result) |
+| Freedom of values | ~~**21.**~~ **Neither, once path 26 is on the table.** This row said path 2 "can only insert values `find` actually returned". With `Default` derived, `mem::take(&mut u)` puts a Domain **nobody built** where a loaded one was, and with `Deserialize` derived the values are the attacker's — from a foreign crate, measured (P43). Since the same table classifies path 2 as **permanent**, the understatement was on the permanent side, and it was being used to prioritise how path 21 gets closed. What remains true is that 21's *preconditions* are lighter: no capability and no `find` result |
 | Reach and permanence | **2.** Path 2 holds across a crate boundary given a `&mut D`, and **survives closing 21** (it is classified below under what cannot be closed in principle). 21 is crate-local and disappears once closed |
 
 A forged `User`'s getters were confirmed to work at run time (probe P8 of the
@@ -180,6 +197,140 @@ the spike was deliberate** — this route is the domain's exposure form itself, 
 the choice determines the shape of M2's derive tasks (ARK-002: blocking without an
 alternative pushes people onto unchecked routes).
 
+#### paths 26 and 28 — what closes them is placement, and it is not a check (compile- and run-verified)
+
+Both are cause 1's, both are outside its remedy, and neither is path 21. Reproduce:
+`spikes/domain-opacity-sqlx/` (`bash run.sh`), probes **P42**–**P46**.
+
+**Path 26 — the derives the user attaches.**
+
+`read-contract.md` records the remedy as "forbid `Deserialize` on a domain". #44
+measured that a derive cannot see its sibling derives and an attribute can, and
+concluded that the attribute form can enforce it. **That is true of one position.**
+
+| Where the derive is written | What happens |
+|---|---|
+| **below** `#[domain]` | the attribute sees it in its own token stream and rejects it — **P46** / **P50**, layer 1, verum's own wording |
+| **above** `#[domain]` | **the attribute never receives it.** rustc expands an item's outer attributes in **source order**, and the first active attribute macro consumes the rest; a derive listed above is therefore expanded *first* and applies to whatever the attribute emitted. **P42** |
+
+> **The mechanism sentence above was wrong in an earlier version**, which said the
+> attribute is expanded first and that "dropping it from the re-emitted item does not
+> suppress it". The attribute never has it, so there is nothing to drop — and only the
+> accurate version predicts P42's `E0560`, because it explains why the derive's
+> generated code names the *original* fields.
+
+**And the check is blind to spelling as well as position.** `r#Default` yielded
+`"r#Default"` from `to_string()` and matched nothing; an aliased import
+(`use core::clone::Clone as Dup;`) matches nothing in principle, because a proc
+macro resolves no names. **This is the same argument this file uses against path 5's
+name-based field whitelist**, and it applies here too — so the name check cannot be
+the guarantee for any trait.
+
+**What is the guarantee: the conflicting impl.** The attribute does not need to see
+the derive; it needs to occupy the coherence slot. `#[domain]` emits its own
+`impl Default` and `impl Clone`, so the user's derive is `E0119` with the span on
+their own derive, in **every** position and under **every** spelling — coherence
+reads neither. **P42** / **P47**.
+
+| Derive | Closed by | Reaches every position? | Every spelling? |
+|---|---|---|---|
+| `Default`, `Clone` | the emitted impl → `E0119` | **yes** | **yes** |
+| `Copy` | `E0204` (the `Repr` carries no derive), plus a check on `repr_derive(..)` — the attribute's **own** argument list | **yes** | **yes** |
+| `Deserialize` | the layer-1 name check only | no | no |
+
+> **ARK-002 is not satisfied for `Clone`.** Duplicating a Domain is a legitimate
+> need — two call sites, a before/after comparison — and the checked alternative for
+> it is a `Projection`, which path 3 records as **"Not provided"**. So `Clone` is now
+> blocked (`E0119`) with nothing to point at, which is the shape this file warns
+> about: the type wall is high, so the AI walks around it. The emitted message names
+> the repository, which is the alternative for *obtaining* a Domain and not for
+> copying one. Until `Projection` exists, this is a known cost rather than a closed
+> route.
+
+**`Copy` is on that table because closing the other two opened it.**
+`#[derive(Copy)]` requires `Self: Clone`; that was unsatisfied, so `Copy` failed
+with `E0277` — an *incidental* barrier that emitting `Clone` removed. A bit-copy
+duplicates the Domain without calling the emitted `clone`, so the
+`unimplemented!()` body is no defence. Recorded because a reader would otherwise
+take the `E0119` row as strictly better with no cost.
+
+**What placement does and does not reach**, measured by isolating shape from
+position:
+
+| Emitted shape | Emitted where | Result |
+|---|---|---|
+| newtype (what `#[domain]` emits) | the user's module | rejected, **`E0560`** — but only because the derive's generated code names fields the attribute deleted. An *accidental* rejection, and it disappears the moment `#[domain]` preserves the field names |
+| field names preserved | the user's module | **compiles, and the forgery runs from a foreign crate** — `serde_json::from_str` with the attacker's values, `clone`, `mem::take`. **P43** |
+| field names preserved | a **macro-owned child module** | rejected, **`E0616`** (`Clone` reads the field). With `Default` alone the same source is **`E0451`** (construction). **P44** |
+
+**Placement is the mechanism — for a derive whose generated code names a field.**
+`#[derive(Clone, Copy)]` above the attribute **compiles under the confined shape**:
+with `Copy` present, `Clone`'s derive emits `*self` and names nothing, so it meets
+neither the newtype mismatch nor the field privacy. That is **P49**, and it is why
+the unqualified form of this sentence was withdrawn — the qualification is what
+makes `Copy` need its own remedy.
+
+Placement still matters, because it is what ADR-0010 chose for path 21 and it
+happens to cover the field-naming derives: **if the confinement radius is ever
+relaxed, two paths reopen**, and until this entry existed only one of them said so.
+Both rows name the dependency now, and so does
+[ADR-0015](../adr/0015-remedies-state-what-they-do-not-reach.md).
+
+**Path 28 — the field type's insides, and what a remedy can actually reach.**
+
+Path 5's remedy restricts the *field types*, and **both horns of it are now
+measured** — P45 measures only the `&self` escalation, so the remedy's failure was
+desk analysis until probes P51–P54 existed:
+
+| Form of the remedy | Result |
+|---|---|
+| an **allow-list** of permitted field-type names | **P51**, rejected: it turns away `Email`, the user's own value object. "Too narrow" is not a risk, it is immediate |
+| a **deny-list** of interior-mutable names | **P53**, accepted: `type Audit = RefCell<Vec<String>>` passes, because the macro compares the token `Audit`. **P54** is the control — written out, the same check rejects it |
+| the same predicate emitted as a **bound** | **P52**, `E0277`: the macro passes the tokens into a bound position and **rustc resolves the alias for it** |
+
+So "a derive sees only tokens" kills the *name* form and not the remedy. `struct
+Money(Cell<i64>)` remains unmeasured and is a user-defined type rather than an
+alias, so it is the same class as P53 with a different shape.
+
+The escalation is that the mutation goes through `&self`:
+
+```rust,ignore   // fragment, not a complete item
+// from another crate, on a Domain built through its legitimate route
+let readonly: &Order = &order;
+readonly.audit().borrow_mut().push("written by a GET".to_owned());
+```
+
+No `&mut`, no capability, and **nothing forged** — this is a correctly loaded
+Domain whose contents change through a shared reference. `&self` is what puts it
+inside a GET, where `Mutates = ()` and
+[`capability-system.md`](./capability-system.md) describes the read-only guarantee.
+That guarantee is about the *setter's* where clause, and this route never reaches a
+setter.
+
+**The child-module confinement that closes 26 does not reach 28** — P45's `Order`
+is emitted into the confined module and the mutation still lands. Opacity is a
+property of the Domain; the insides of its field types are a different boundary.
+
+**What a remedy reaches, measured (#44's review). Not `Freeze`.**
+
+The remedy column said "the closing mechanism is `Freeze`, which is unstable", and
+that was wrong in both directions.
+
+| Mechanism | Reaches | Does not reach |
+|---|---|---|
+| a **name** check, either horn | nothing usable — an allow-list turns away the user's own types (**P51**), a deny-list is bypassed by one alias (**P53**, control **P54**) | both horns |
+| the same predicate emitted as a **bound** (`fn assert<T: Sync>()`, or a sealed `DomainField`) | **`Cell`, `RefCell`, and the alias**, today on stable — **P52** | `Mutex` / `RwLock` / `Atomic*` / `OnceLock`, which are `Sync`. And it **forbids `Rc`** — the "too narrow" horn, now priced rather than hypothetical |
+| `Freeze` (unstable) | `Mutex` and atomics **held directly** | **`Arc<Mutex<..>>`, `Rc<RefCell<..>>`, `&'static Mutex<..>`** — `Freeze` is about an `UnsafeCell` reachable *without* indirection, so the idiomatic shape passes it. Compile-verified on nightly, and the `Arc<Mutex<..>>` route was **run** through a real getter |
+
+So `Freeze` is not "the" mechanism and not sufficient; the bound form is available
+now and is partial. **A sealed `DomainField` bound is the closest thing to a
+closure**, and it inherits path 13's problem — a user can write
+`impl verum::DomainField for MyLocalType`, so it needs sealing, and the seal must
+survive being derive-facing. That makes path 28 *conditionally* closable in the same
+sense path 13 is, which is a very different statement from "impossible until
+`Freeze`". None of it is adopted here; what changes is that the enumeration is no
+longer one item long ([SRK-009](../../dev/spec/review-knowledge.md)).
+
 ### Cause 2: the lifetime and route of a capability
 
 | # | Route | Response | State |
@@ -189,7 +340,7 @@ alternative pushes people onto unchecked routes).
 | 8 | Leaking out of a `when` scope with `Ok(ctx)` | **Not the return type** — the higher-ranked `Ctx` closes the specified signature; see below | **Closed for the specified signature. ⚠️ OPEN for a named `'req`** — reachable from an ordinary handler today (measured) |
 | 9 | `Ctx::for_test()` as a god-mode constructor | Require a sealed `Runtime` token ([ADR-0006](../adr/0006-runtime-sealed-token.md), still `proposed`); testing goes through an API with a fixed endpoint type | ⚠️ **Stated, not closed.** What T-M1-02 measured is **visibility** — `Ctx::new` is `pub(crate)`, so `app` gets `E0624`. **No seal was measured**, and visibility alone was measured to leak (note below) |
 | 10 | A `PgPool` on the endpoint struct | `#[endpoint]` rejects anything but a unit struct | **Closed in the First PoC** |
-| 11 | Passing a `dyn Repository` to a service (the type parameters vanish) | Do not expose `dyn Repository`; parameterise the service by capabilities too | **Closed in the First PoC** |
+| 11 | Passing a `dyn Repository` to a service (the type parameters vanish) | ~~Do not expose `dyn Repository`; parameterise the service by capabilities too~~ — **verum exposes no `dyn` anything and the remedy still cannot be enforced**, because the user supplies the trait; see path 27 | ⚠️ **Stated** (was "Closed in the First PoC"; #44, compile-verified against the shipped `Repo`). Probes G1–G3 |
 | 12 | A hand-written `impl Endpoint` declaring arbitrary capabilities | Seal `Endpoint` | **Closed in the First PoC** (nobody can satisfy the seal — no macros exist yet). ⚠️ **Reopens at M2 under the assumed emission shape** (#41, measured): if `#[endpoint]` emits `impl Endpoint for X` then `SealedEndpoint` must be nameable downstream, and proc-macro output is syntactically indistinguishable from hand-written code. A forged `Endpoint` declares any `Domains` — **and, once they exist, any `Reads` / `Mutates` / `Creates` / `Deletes` / `Emits` / `Calls`, so it dominates forging `Includes`**. Bounded two ways, both measured: `impl Endpoint for other_crate::X` is `E0117` (confined to the crate owning the endpoint type) and widening a set the derive already emitted is `E0119` (an attacker must introduce a *new* local type). ⚠️ **"Cannot be closed by types" was asserted and then refuted in review** — emitting a *type* rather than an impl (`pub type X = EndpointOf<Tag, Domains>`) leaves `derive_facing` empty and makes a downstream `impl Endpoint` `E0277`; compiled, though unchecked against `Reads`/`Mutates`/routing. **The emission shape is #60's to decide and is open, not closed.** AI Context: `forged_endpoint`, `permanent: true`; per ARK-005 an inventory check is the fallback *if* the impl-emitting shape is taken. [ADR-0013](../adr/0013-includes-is-a-blanket-impl.md) |
 | 13 | `impl Includes<Order> for User` (a local type, so it passes the orphan rule) | ~~Seal `Includes`~~ → **make `Includes` a blanket impl**, so the derive never names its seal and the seal stays `pub(crate)` for good ([ADR-0013](../adr/0013-includes-is-a-blanket-impl.md), #41) | ✅ **Closed, and it survives M2** — measured downstream: `spikes/seal-after-m2` S3 rejects the forgery with Verum's own wording, S5 confirms a declared domain still resolves. ⚠️ **The seal alone did not survive**: with one impl per domain, exposing `derive_facing` as M2 requires lets an attacker write the seal impl too and two undeclared domains pass (S2). Not implemented yet — needs `Endpoint` (#60). Conditional on path 12: a forged `Endpoint` declares any `Domains`, and the blanket faithfully reports it |
 | 14 | Forging `impl Field<...>` (forging `Field::NAME` forges the column name in generated SQL) | Seal it | **Closed in the First PoC** (`Field` unimplemented). ⚠️ **Reopens at M2** (#41): `Field::NAME` is per-field *data*, so the derive must emit one impl per field and must name the seal. **The blanket trick that saved path 13 does not apply** — there is nothing to derive the value from. Forging `NAME` forges a column name in generated SQL, so this is the most damaging of the four. AI Context: `forged_field`, `permanent: true` |
@@ -445,10 +596,63 @@ Reproduce: `spikes/reads-getter-enforcement/` (`bash run.sh`). Decision in
 | 17 | Raw SQL inside a repository implementation | Move the boundary by generating the implementation / an SQL lint | **Deferred (stated)** |
 | 18 | Side effects inside a free-function constructor (`AuditLog::user_updated()` and the like) — `kind: constructor_body` | Generate the constructors and remove the room for hand-writing | **Deferred (stated)** |
 | 19 | Bypassing field granularity with `creates` + `deletes` (an upsert) — `kind: upsert_granularity` | The derive rejects declaring both for one domain / `create` takes new IDs only | **Deferred (stated)** |
-| 20 | `Condition::holds` unlocks everything by returning `true` | **Impossible in principle** | **Permanently stated** |
+| 20 | ~~`Condition::holds` unlocks everything by returning `true`~~ → **it unlocks the effects declared under that condition** — and it is **arbitrary user code the framework calls on every request**, taking `&Domain` and `&Request`; below | **Impossible in principle.** "Require purity by convention" is not a check — `holds` lives in another impl, which is path 26's reason | **Permanently stated.** ⚠️ **Its blast radius is bounded by `E::Conditional` being derived from the declaration, and that bound depends on path 12**, which reopens at M2 |
 | 23 | **`Debug` / `Serialize` / a free function reads a field the endpoint did not declare in `reads`** — `kind: uncapped_read` | Capability-check the getters (measured to work) and accept that these routes are outside them. A `Projection`'s **own** derived `Debug` does narrow to the declared set (#15, P4), but the `Domain` value still exists and its `Debug` and any free function taking `&Domain` reach every field | **Stated** (measured, #15) |
 | 22 | **The `syntactically_present` scan is neither complete nor sound.** *(a)* It cannot leave the item it is attached to — a free associated function taking `&ctx`, a helper in a sibling `impl`, and **an effect produced by a `macro_rules!` expansion** (the last is unreachable even with cross-item analysis, since the macro may come from another crate). *(b)* Within the item it matches by **spelling** — the handler parameter named anything but `ctx` voids every key at once; `let repo = ctx.users()` and UFCS are missed. *(c)* It runs **before cfg-stripping**, so it reports effects from code that is never compiled | (a) annotate every effect-carrying item and take the transitive closure at build time (a future form); (b) is closable in the scanner and at layer 1; (c) has no fix — the tokens are all there is. **`scope: "ctx_spelled_same_item"` overstates (a) and says nothing about (b) or (c)** and needs replacing | **Stated** (Q-A / 2026-08-15; **rewritten by T-M1-07 / #37**, compile-verified. Enumeration is of *observed* classes, not a census) |
+| 27 | **The user erases the capability parameters themselves.** They define their own object-safe trait, implement it for `Repo<'req, D, R, M>` — **a blanket impl covers every capability shape from one line** — and pass `&dyn`. `D`, `R` and `M` vanish from every signature downstream, so no transitive closure can be taken over the service | **None available.** verum exposes no `dyn` anything; `Repo` is public because it has to be, a local trait with a foreign `Self` passes the orphan rule, and no set of exports forbids it at all — a blanket impl need not name `Repo`, and a closure needs no trait | ⚠️ **Stated, and the remedy is unenforceable** — G1/G2/G3, compile-verified against the shipped `verum::Repo` from a crate that only depends on it. ⚠️ **It does not defeat `'req`** (G4): this is capability erasure, path 24 was scope escape, and the two are kept apart for that reason |
+| 29 | **The generated repository is a `pub` unit struct, so any crate can mint one.** [ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)'s listing re-exports `Account` **and `AccountRepository`**; the repository holds no state, so a foreign crate writes `AccountRepository.find(&its_own_pool, 1)` and receives a Domain whose every field it chose. No `Ctx`, no `Includes`, no capability, no `Repr`, no derive | **Not provided.** Acquisition has to be bound to the `Ctx` — the repository reachable only as something `ctx.users()` hands out, or its constructor requiring a `'req` token — and that is #60 / ADR-0006's shape to decide, not decided here | ⚠️ **Stated.** Compile- and **run**-verified from the foreign crate the path names (`VERUM_MINT=attacker@example.com`, `spikes/domain-opacity-sqlx`). ⚠️ **This is path 21's checked alternative** — the route ARK-002 required in exchange for closing 21 — so it is not a defect *beside* that closure but its cost, and `persistence.md`'s foreign-crate row read `E0624` because P27 measures `from_repr` and nothing measured the repository |
 | 25 | **An external effect fires before the commit** — `handler-rules.md` Rule 4's ordering ("send the mail *after* the transaction") is a convention, not a type | **Not provided in the First PoC.** The designed mechanism — issue the effect capability only inside `ctx.after_commit`, scoped the way `when` is — needs a transaction boundary, and that is not designed ([`research-questions.md`](./research-questions.md)) | ⚠️ **Stated, not enforced.** `'req` (path 24) stops a handle leaving the request; it does not order effects *within* it. Rule 4's sample code is written in the correct order because Verum supplies the template an AI imitates — **that is the whole of the mechanism today**, and this row is what stops it reading as a guarantee. Recorded by #39, which closed path 24 and found Rule 4 resting on it |
+
+#### path 27 — the remedy is unenforceable because the user supplies the trait (compile-verified)
+
+Path 11's remedy read "do not expose `dyn Repository`; parameterise the service by
+capabilities too", and its status read "Closed in the First PoC". **verum does not
+expose `dyn` anything**, and the path is open anyway. Reproduce:
+`spikes/ctx-lifetime-rpitit/` (`bash run.sh`), probes **G1**–**G4**, against the
+shipped `verum::Repo` through a crate whose only dependency is verum.
+
+```rust,ignore   // fragment, not a complete item
+// the user's crate, and every line of it is ordinary safe Rust
+pub trait AnyService { fn touch(&self); }
+impl<D, R, M> AnyService for verum::Repo<'_, D, R, M> { fn touch(&self) {} }   // G2
+
+pub fn service(handle: &dyn AnyService) { handle.touch(); }                    // G3
+```
+
+Three things make it unclosable rather than merely open:
+
+* **`Repo` has to be public.** It is what `ctx.users()` returns.
+* **A local trait with a foreign `Self` passes the orphan rule.** This is the same
+  fact that made sealing necessary everywhere else (path 13, RK-009), and here
+  there is nothing to seal: the trait is the *user's*.
+* **One blanket impl covers every capability shape**, present and future,
+  including sets no endpoint declared.
+* **No set of exports forbids it at all**, and "unless `Repo` is unnameable" was
+  too weak a way to say so. `impl<T> AuditAny for T {}` does not mention `Repo`, and
+  `&Repo` coerces to `&dyn AuditAny` from it; a `&dyn Fn() -> _` closure erases the
+  parameters with **no trait and no impl of the user's at all**. Both compile against
+  the shipped crate. Making `Repo` unnameable — an opaque return plus a sealed trait
+  — is also defeated, by a blanket impl over the *bound* rather than the type. The
+  verdict is unchanged and its reason is stronger.
+
+**What it costs and what it does not.** Downstream of the `&dyn`, `D`, `R` and `M`
+are gone from every signature, so the transitive closure
+[`effect-inference.md`](./effect-inference.md) would need over a service cannot be
+taken — the service's *type* says nothing about which domain or fields it touches.
+**It does not defeat `'req`** (**G4**, `lifetime may not live long enough`): `dyn`
+erases type arguments and still carries a lifetime bound, so a handle borrowed for
+the request cannot be laundered into a `&'static dyn`.
+
+> **Path 27 is capability erasure; path 24 was scope escape.** Keeping them apart
+> matters because the fix for one is not the fix for the other, and because #39's
+> closure of 24 is not weakened by this. It is the same distinction the path-24 row
+> draws to explain why every one of #14's acceptance criteria passed while 24 was
+> open.
+
+Field-granular checking is unaffected *inside* the impl — the user's method body
+still cannot touch an undeclared field. What is lost is that anything **calling
+through the `&dyn`** has no declaration to check against, and no AI Context key can
+describe it.
 
 ---
 
@@ -468,11 +672,43 @@ impl Condition<User, UpdateUserRequest> for EmailChanged {
 A boolean a user wrote cannot be verified in types. And because **the AI Context
 still emits `"conditional": [...]`, the metadata actively lies.**
 
+> ### This path was described wrongly in **both** directions (#44)
+>
+> **Overstated: it does not unlock "everything".** What `holds` returning `true`
+> unlocks is the effects **declared under that condition** — the declaration is
+> still the ceiling, and [`mutation-contract.md`](./mutation-contract.md) already
+> publishes the union of the conditional and unconditional sets. The lie is about
+> *conditionality*, never about the effect set.
+> [`conditional-effects.md`](./conditional-effects.md) words this correctly, and
+> the row above did not.
+>
+> **Understated: `holds` is not a predicate with a hole in it.** It is **arbitrary
+> user code that the framework itself calls on every request**, receiving
+> `&Domain` and `&Request`, free to open a socket, read a clock, or write a file —
+> none of which appears anywhere in the contract. That is why the path is filed
+> under cause 3 (effects where no contract is required) and not merely as an
+> unverifiable boolean.
+>
+> **And its remedy cannot be checked**, for path 26's reason: "require purity by
+> convention" is a claim about the body of an impl the macro does not expand. A
+> derive on the `Condition` type cannot see it — the same wall that makes the
+> forbidden-derive check a lint.
+>
+> **The bound on the blast radius depends on a path that reopens** — *desk
+> analysis, not compiled*: neither `Endpoint` nor `Condition` exists in
+> `crates/verum` yet, so there is nothing to measure it against. What keeps a
+> true-returning `holds` from unlocking the whole contract is that
+> `E::Conditional` is **derived from the declaration**. A forged `Endpoint`
+> declares any sets it likes (**path 12**, `permanent: true` since #41, and that
+> half *is* measured — `spikes/seal-after-m2` S2), so path 20's containment rests
+> on path 12 holding, and path 12 reopens at M2. Stated here because a reader of
+> path 20 alone would take the containment as unconditional.
+
 The response:
 
 - Always emit `condition_verified: false` in the AI Context
 - Make it a convention that a `Condition` implementation is a pure function (no
-  external I/O, clock or randomness)
+  external I/O, clock or randomness) — **a convention, and nothing checks it**
 - Require a condition to be defined once as a named type, so it can be identified
   as a subject for review and testing
 
@@ -613,6 +849,29 @@ An unchecked boundary is **always** emitted in the AI Context.
         "permanent": true
       },
       {
+        "kind": "forged_derive",
+        "detail": "a derive the USER attaches hands out a Domain with no capability: Default invents one, Deserialize sets every field from a string, mem::take reinitialises through a &mut alone, Clone and Copy take a copy. Default and Clone are closed because #[domain] emits the conflicting impl (E0119, any position, any spelling); Copy is E0204 unless repr_derive(Copy), which is the attribute's own argument list. Deserialize is a LINT only \u2014 verum has no serde dependency, so there is no impl to collide with, and a name check is blind above the attribute and to any alias (path 26)",
+        "location": "src/domain/user.rs",
+        "permanent": false
+      },
+      {
+        "kind": "mintable_repository",
+        "detail": "the repository ADR-0010 generates beside the Domain is a `pub` unit struct that carries no state, so any crate constructs one and calls it with its own pool: the Domain that comes back is legitimately built and every field is the caller's. No Ctx, no Includes, no capability, no Repr, no derive. This is the checked alternative path 21's closure was paid for, so closing 21 without binding acquisition to the Ctx moves the route rather than removing it (path 29)",
+        "location": "src/domain/user.rs",
+        "permanent": false
+      },
+      {
+        "kind": "dyn_erasure",
+        "detail": "the user defines their own object-safe trait, implements it for Repo<'req, D, R, M> \u2014 one blanket impl covers every capability shape \u2014 and passes &dyn, so D/R/M vanish from every signature downstream and no transitive closure can be taken over the service. verum exposes no dyn anything; the trait is the user's, so there is nothing to seal and no export to withhold. It does not defeat 'req (path 27)",
+        "permanent": true
+      },
+      {
+        "kind": "aliased_interior_mutability",
+        "detail": "an interior-mutable field type is written through the &self getter, so it is available where Mutates = () \u2014 a GET \u2014 and nothing is forged: a correctly loaded Domain changes through a shared reference. A NAME-based whitelist over field types cannot see it; the same whitelist emitted as a BOUND resolves the alias and closes Cell/RefCell today, at the cost of forbidding Rc, and does not reach Mutex/atomics. Freeze does NOT close it either: Arc<Mutex<..>> and Rc<RefCell<..>> satisfy Freeze (path 28)",
+        "location": "src/domain/order.rs",
+        "permanent": false
+      },
+      {
         "kind": "unscanned_effect",
         "detail": "the syntactically_present scan is neither complete nor sound: it cannot leave its own item (free functions, sibling impls, macro expansions), it matches receivers by spelling (a renamed ctx parameter voids every key), and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
         "permanent": false
@@ -648,10 +907,18 @@ Widening the contract reduces the entries in `unverified_boundaries`. That count
 is the progress metric.
 
 ```text
-First PoC:  5 permanent + 9 non-permanent
-Full PoC:   5 permanent + 6 non-permanent (middleware and events handled)
-Later:      5 permanent + 0 non-permanent
+First PoC:  6 permanent + 12 non-permanent
+Full PoC:   6 permanent + 10 non-permanent (middleware and events handled)
+Later:      6 permanent +  0 non-permanent
 ```
+
+> **These three lines are the third copy of the two numbers, and they are now
+> checked** — `check_json.py` parses this block, compares it to the emitted
+> entries, and derives the `Full PoC` line by removing exactly the two kinds its
+> own parenthesis names. It was `6 + 8` until #44's review: 11 − 2 = 9, and the
+> pre-#44 value (`9 → 6`) carried the same off-by-one, so raising both by two
+> preserved it. Eleven lines below, the counting rule asserted that there was **no
+> third place for these numbers to disagree from**. There was, and this was it.
 
 `permanent` never reaches zero. Not hiding that is this file's purpose. And the
 count is a floor, not a total — `completeness: "best_effort"` says the list is
@@ -659,13 +926,23 @@ what has been found, so a *rising* count is a review working, not a regression.
 
 > **The counting rule** (stated explicitly because a review noted "the number
 > differs every time it is counted"): count **one-to-one with the entries emitted
-> in the AI Context's `unverified_boundaries.entries`.** permanent 5 =
+> in the AI Context's `unverified_boundaries.entries`.** permanent 6 =
 > `condition_body` (20) / `row_scope` (row-level permissions) / `domain_swap` (2) /
-> **`forged_endpoint` (12)** / **`forged_field` (14)**.
-> non-permanent 9 = `middleware` (16) / `event_subscriber` (15) /
+> **`forged_endpoint` (12)** / **`forged_field` (14)** / **`dyn_erasure` (27)**.
+> non-permanent 12 = `middleware` (16) / `event_subscriber` (15) /
 > `repository_impl` (17) / `constructor_body` (18) / `upsert_granularity` (19) /
 > `domain_repr` (21) / `malformed_set` (14f) / `unscanned_effect` (22) /
-> `uncapped_read` (23).
+> `uncapped_read` (23) / `forged_derive` (26) /
+> `aliased_interior_mutability` (28) / `mintable_repository` (29).
+>
+> **The two numbers above are the only ones stated, and both are checked.** An
+> earlier version of this note also said "these twelve entries" in prose while the
+> enumeration held fourteen — a third copy of a count, in a sentence, with nothing
+> comparing it to either of the other two. `check_json.py` now parses this note and
+> asserts that each stated number equals the names beside it, that the union equals
+> what the sample emits, and that each name's side matches the `permanent` flag in
+> the JSON. So the numbers here can no longer disagree with the entries, and there
+> is no third place for them to disagree from.
 >
 > **Paths 12 and 14 went from 3 to 5 permanent in #41.** Both were "Closed in the
 > First PoC" only because `verum-macros` emits nothing yet; #41 measured that they
@@ -676,16 +953,48 @@ what has been found, so a *rising* count is a review working, not a regression.
 > the AI Context", above). Caught in review. `check_json.py` could not see it,
 > because nothing was added for it to disagree with.
 >
+> **And the entries it did add went into one sample only.** `forged_endpoint` and
+> `forged_field` reached this file's sample and never
+> [`ai-context.md`](./ai-context.md)'s, so the two disagreed for five PRs while the
+> paragraph below asserted they must agree — the ledger emitted 14 kinds and
+> `ai-context.md` 12. Found in #44, by writing the check the paragraph below
+> claimed already existed.
+>
+> **Paths 26, 27 and 28 were added in #44**, taking permanent to **6** and
+> non-permanent to **11**. `dyn_erasure` (27) is the permanent one: verum exposes
+> no `dyn` anything and the remedy is still unenforceable, because the trait is the
+> user's. `forged_derive` (26) is non-permanent for an uncomfortable reason — it is
+> closed today by a placement chosen for path 21, not by anything aimed at it.
+>
 > **Paths 18 and 19 were previously uncounted** because neither had a `kind` name
 > decided, and this definition excluded 19 while counting 18 — so what the
 > definition counted and what was emitted disagreed (#43 item 8). Both are now
 > named and emitted, which #38 forced: `enforcement.voided_by` may only name a
 > `kind` that exists, and both paths void `mutates`.
 >
-> These twelve entries must **agree as a set** with both this file's sample and
+> The entries must **agree as a set** with both this file's sample and
 > [`ai-context.md`](./ai-context.md)'s. Three places holding different values is
-> why this note was rewritten; `spikes/doc-code-blocks/check_json.py` now makes
-> the agreement mechanical rather than a promise.
+> why this note was rewritten, and `spikes/doc-code-blocks/check_json.py` now
+> **does** make that agreement mechanical: it compares the two samples, parses the
+> enumeration above, and checks each name's side against the JSON's `permanent`.
+> Each of those was planted and confirmed red before being relied on.
+>
+> **What it still does not check, stated so this paragraph does not overreach
+> again**: that every emitted `kind` is *named* by some `enforcement.voided_by`.
+> These are not — `condition_body`, `row_scope`, `uncapped_read`,
+> `forged_endpoint`, `forged_field`, `dyn_erasure` — so for the keys they void, a
+> reader who stops at `enforcement` comes away believing the guarantee is
+> unconditional, which is the exact failure the join is described below as
+> preventing. Which keys each of them voids is a design question, not a copy edit
+> (`dyn_erasure` voids the effects of a *service*, and there is no key for a
+> service), and asserting the join here with an exemption list of exactly those
+> names would be an assertion that cannot fail. **No count is given on purpose** —
+> a number here would be a third copy of something nothing compares.
+>
+> Of #44's three new kinds, two do have an owner and were joined:
+> `forged_derive` and `aliased_interior_mutability` both void `mutates`, beside
+> `domain_repr` and `domain_swap`, which are the other two routes by which a
+> Domain's values change outside the declaration.
 
 ---
 
@@ -705,6 +1014,13 @@ This is stated per key rather than once globally: `mutates`, `creates` and
 `deletes` each carry `enforcement.scope: "handle_via_ctx"` and list `middleware`
 under `voided_by`. When middleware contracts arrive, `middleware` leaves
 `voided_by` and the scope widens.
+
+**And it is narrower than the handler scope, too** (path 28, #44). `Mutates = ()`
+is enforced through the *setter's* where clause, so a mutation that never calls a
+setter is outside it: an interior-mutable field type is written through `&self`,
+which a GET has. That happens **inside** the handler, so widening the scope to the
+request does not reach it and neither does closing `middleware`. It leaves
+`voided_by` only when `Freeze` stabilises.
 
 > **There is no longer a `scope_of_readonly_guarantee` key.** It said exactly what
 > those three keys now say — "all three empty, checked only inside the handler" —

@@ -130,6 +130,21 @@ let svc = UserUpdateService::new(Arc::new(repo) as Arc<dyn UserRepository>);
 parameterised `Repo<'req, D, R, M>`, and the service itself carries capabilities in its
 type as `Service<Reads, Mutates>`.
 
+> **⚠️ Verum not exposing it is not the same as it not happening** (#44,
+> compile-verified against the shipped `verum::Repo`). The user defines their **own**
+> object-safe trait, implements it for `Repo<'req, D, R, M>` — a single blanket impl
+> covers every capability shape — and passes `&dyn`. A local trait with a foreign
+> `Self` passes the orphan rule, so there is nothing to seal and no export to
+> withhold — and making `Repo` unnameable would not help either, because
+> `impl<T> Svc for T {}` never names it and a `&dyn Fn()` closure needs no trait at
+> all (both compile-verified). Ledger **path 27**,
+> probes G1–G3 in `spikes/ctx-lifetime-rpitit`. It does **not** defeat `'req` (G4),
+> so this is capability erasure and not scope escape.
+>
+> The sentence above is what verum does, and it stands. What it is not is a
+> guarantee that the erasure cannot happen — path 11 read "Closed in the First PoC"
+> on the strength of exactly that conflation until #44.
+
 Effects reached through a service also fall outside
 [`handler-rules.md`](./handler-rules.md) Rule 2's grep guarantee, which counts
 lines containing `ctx.`.

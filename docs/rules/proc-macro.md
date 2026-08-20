@@ -36,7 +36,12 @@ is the definition site of the `Has` impl. Push everything that can move to layer
 
 ## 2. What the macro must always catch
 
-Everything below is **detected at layer 1**. These are mandatory.
+Everything below is **detected at layer 1**, and mandatory — except where a row
+says otherwise in the row itself. Two do: the `pub`-field check and the
+forbidden-derive check are **lints**, for different reasons, and a heading that
+claims uniform layer-1 coverage above a row that denies it is the shape
+[ARK-007](../dev/arch/review-knowledge.md) is about — state the scope per key,
+not once globally.
 
 | Check | Reason |
 |---|---|
@@ -46,6 +51,38 @@ Everything below is **detected at layer 1**. These are mandatory.
 | `mutates` conflicting with `forbidden` | The only thing `forbidden` checks |
 | An endpoint that is not a unit struct | Otherwise `self.pool` routes around `ctx` |
 | A misspelt effect vocabulary item (`SendEmail`, …) | The infrastructure-effect vocabulary is closed ([`../specs/effect-system.md`](../specs/effect-system.md)) |
+| `Default` / `Clone` / `Deserialize` derived on a domain | Each hands out a Domain with no capability (ledger path 26). **`Default` and `Clone` are closed by a conflicting impl, not by this check** (`E0119`, any position, any spelling); `Copy` by `E0204` plus a check on `repr_derive`'s own argument list; **`Deserialize` is a lint** and blind to half the positions and to aliases — see the note below |
+
+> **The enumeration in the row above is the exception `api-surface.md` §8 warns
+> about, and it is bounded on purpose.** §8 and `:186` below both say not to list
+> derives, *because a list is a duplicate and an under-statement* — and #44's
+> review reproduced exactly that: `serde::Serialize` is on no list and passes,
+> leaking every private field. The three names above are not the general form;
+> they are the **traits verum can name well enough to collide with**, which is a
+> property of verum's dependencies and belongs where the mechanism is described.
+> For any other derive, §8's general form governs and this list says nothing.
+>
+> **The forbidden-derive check reaches one position out of two, measured.**
+> `#[domain]` sees a derive written **below** it and rejects it
+> (`spikes/domain-opacity-sqlx` P46). A derive written **above** it is collected by
+> rustc independently — dropping it from the re-emitted item does not suppress it —
+> so the check never runs (P42). What rejects that position is the emitted shape
+> mismatching by accident (`E0560`) and, when the shape is preserved, the
+> macro-owned child module ([ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)):
+> P43 forges and *runs* from a foreign crate without it, P44 is `E0616` with it.
+>
+> So this row is a **lint** — and only for `Deserialize`. RK-016 fired twice over:
+> the check depends on where the derive is **placed** *and* on how it is
+> **spelled** (`r#Default` and `use core::clone::Clone as Dup;` are invisible in
+> every position, because a proc macro resolves no names). What closes `Default`
+> and `Clone` instead is the **conflicting impl** `#[domain]` emits: coherence
+> reads neither position nor spelling, so the user's derive is `E0119` with the
+> span on their own derive (P42 / P47). `Copy` is structurally `E0204` unless the
+> user passes `repr_derive(Copy)`, and *that* list is the attribute's own
+> argument, so the check there is unconditional (P48 / P49).
+> [ADR-0015](../adr/0015-remedies-state-what-they-do-not-reach.md) records the
+> split and its cost: the emitted bodies are `unimplemented!()`, so a legitimate
+> `Default::default()` compiles and panics.
 
 > **A nonexistent field or domain is not on this list.** A proc macro sees the
 > tokens of a single item, so `#[contract(...)]` on the endpoint's unit struct

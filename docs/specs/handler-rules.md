@@ -111,7 +111,7 @@ measured how far it holds. It is not a property of the language: see
 | Holding a `PgPool` on the endpoint struct and running SQL directly | `#[endpoint]` rejects anything but a unit struct |
 | Carrying a capability out through `tokio::spawn` | `Ctx<'req, E>` is not `'static` |
 | Carrying out a **handle** the `Ctx` produced | `Repo<'req, D, R, M>` is not `'static` either (#39, [ADR-0005](../adr/0005-repo-handle-shape.md)). Until #39 this row was missing and the route was open — the `Ctx` was contained and everything it handed out was not, measured at run time |
-| Passing a `dyn Repository` to a service | `dyn Repository` is not exposed |
+| Passing a `dyn Repository` to a service | `dyn Repository` is not exposed — **and that is not the same as the erasure being closed.** The user's own object-safe trait over `Repo<'req, D, R, M>` erases the parameters and cannot be forbidden (ledger **path 27**, #44, compile-verified). ⚠️ **Stated, not enforced** |
 
 ### The part that remains convention (an important limit)
 

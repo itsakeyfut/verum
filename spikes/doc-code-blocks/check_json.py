@@ -18,8 +18,27 @@ What is checked (ADR-0008 §Confirmation):
   * every `enforcement` value is an object with exactly {level, scope, voided_by}
   * `level` and `scope` are drawn from their closed sets
   * `voided_by` is "not_applicable", or `kind` names that ALL appear in the
-    ledger's own emitted entries — the join is verified from both ends, so
-    neither side can rot alone
+    ledger's own emitted entries
+  * the ledger's sample and `ai-context.md`'s emit the SAME set of `kind`s, and
+    the ledger's counting rule enumerates exactly that set with the counts it
+    states — the enumeration is verified from every end, so no copy can rot alone
+
+    This is what "the join is verified from both ends" used to claim, and the
+    code checked one direction: `voided_by` -> `kind`. #44 measured the cost of
+    the gap — `forged_endpoint` and `forged_field` were added to the ledger's
+    sample by #41 and to nothing else, the counting rule said "these twelve
+    entries" while enumerating fourteen, and the ledger asserted that this file
+    "makes the agreement mechanical rather than a promise".
+
+    The OTHER join — every emitted `kind` being named by some `voided_by` — is
+    deliberately NOT checked, because it does not hold and the fix is a design
+    question, not a copy edit: `condition_body`, `row_scope`, `uncapped_read`,
+    `forged_endpoint`, `forged_field` and `dyn_erasure` are named by no `voided_by`
+    today, so a reader who stops at `enforcement` for the keys they void comes away
+    believing the guarantee is unconditional. Which keys each of them voids is
+    tracked separately — `dyn_erasure` voids the effects of a *service*, and there
+    is no key for a service. Asserting it here with an exemption list of exactly
+    those names would be an assertion that cannot fail, which is worse than none.
   * a key claiming a guarantee (`fields` / `domains` / `emits` / `calls`) carries
     an `enforcement` at all — the case that slipped through twice by hand
   * `escape_hatches`, `deferred` and `voided_by` are never `[]`
@@ -39,6 +58,9 @@ import sys
 # does: run from elsewhere, a relative path finds nothing and reports success.
 DOCS = pathlib.Path(__file__).resolve().parents[2] / "docs"
 LEDGER = DOCS / "specs" / "unverified-boundaries.md"
+# The ledger's entry set is copied here, and the ledger says the two "must agree
+# as a set". Nothing checked that until #44, and they had disagreed since #41.
+AI_CONTEXT = DOCS / "specs" / "ai-context.md"
 
 ANY_FENCE = re.compile(r"^(`{3,})")
 JSON_FENCE = re.compile(r"^```json\s*$")
@@ -133,21 +155,234 @@ def walk(node, fn):
             walk(v, fn)
 
 
-def ledger_kinds():
-    """The `kind` values the ledger actually emits, read from its own sample.
+def emitted_entries(target):
+    """`kind` -> `permanent` for every boundary entry `target` emits.
 
     Parsed rather than hard-coded so the two cannot drift: adding a kind to the
-    checker without adding it to the ledger is not possible, and vice versa.
+    checker without adding it to the file is not possible, and vice versa. The
+    `permanent` flag comes along because the counting rule splits on it, and a
+    split stated in prose beside a split stated in JSON is two copies.
+
+    An entry whose `permanent` is missing or not a bool is reported by the caller
+    rather than defaulted — defaulting would make a typo'd key read as
+    `permanent: false`, which is the cheaper-looking half of the count.
     """
-    kinds = set()
-    for path, _, text in fences(LEDGER.parent):
-        if path != LEDGER:
+    entries = {}
+    duplicates = []
+    samples = 0
+    for path, line, text in fences(target.parent):
+        if path != target:
             continue
         doc = parse(text)
         if doc is None:
             continue
-        walk(doc, lambda k, v: kinds.add(v) if k == "kind" and isinstance(v, str) else None)
-    return kinds
+
+        # ONLY the emitted sample, not every fence in the file. Scanning all of
+        # them and unioning the names is fail-open: #44's review deleted `row_scope`
+        # from `ai-context.md`'s real sample, put the name in an illustrative
+        # `"entries": [ ... ]` fragment elsewhere in the same file, and the
+        # two-sample agreement below stayed green — which is the exact defect this
+        # rule exists to catch, reproduced through the rule itself.
+        found = []
+
+        def sample(node):
+            if isinstance(node, dict):
+                if "completeness" in node and isinstance(node.get("entries"), list):
+                    found.append(node["entries"])
+                for v in node.values():
+                    sample(v)
+            elif isinstance(node, list):
+                for v in node:
+                    sample(v)
+
+        sample(doc)
+        # An illustrative fragment carries `[ ... ]`, which `parse` normalises to
+        # the string "..." — no dict, so it contributes nothing and is not counted.
+        for arr in found:
+            if not any(isinstance(e, dict) for e in arr):
+                continue
+            samples += 1
+            for e in arr:
+                if not isinstance(e, dict) or not isinstance(e.get("kind"), str):
+                    continue
+                kind = e["kind"]
+                if kind in entries:
+                    # A dict silently collapses these, so a duplicated entry with a
+                    # different flag used to disappear — while the counting rule
+                    # says it counts ONE-TO-ONE with the entries emitted.
+                    duplicates.append(f"{target.name}:{line}: entry {kind!r} is emitted twice")
+                entries[kind] = e.get("permanent", "missing")
+    return entries, duplicates, samples
+
+
+def ledger_kinds():
+    return set(emitted_entries(LEDGER)[0])
+
+
+# `permanent 5 = `a` / `b` / ...` and `non-permanent 9 = ...`, from the ledger's
+# own counting-rule note. The lookbehind matters: "non-permanent 9 =" contains
+# "permanent 9 =" as a substring, and matching it would silently read the wrong
+# list. Each segment ends at the next label or at the blank quote line that ends
+# the paragraph.
+COUNT_RULE = {
+    "permanent": re.compile(
+        r"(?<!non-)permanent\s+(\d+)\s*=(.*?)(?=non-permanent\s+\d+\s*=|\n>\s*\n|\Z)",
+        re.S,
+    ),
+    "non-permanent": re.compile(
+        r"non-permanent\s+(\d+)\s*=(.*?)(?=\n>\s*\n|\Z)", re.S
+    ),
+}
+# `[a-z0-9_]+`, not `[a-z_]+`: a kind with a digit in it (`http2_smuggle`) could
+# be added consistently in all three places and still fail here forever.
+BACKTICKED = re.compile(r"`([a-z0-9_]+)`")
+
+# The progress-metric block — the THIRD copy of the same two numbers, eleven lines
+# above the note that claimed there was no third place for them to disagree from.
+# #44 hand-edited it from `5 permanent + 9` to `6 permanent + 11` and nothing
+# compared it to anything; `4 permanent + 99` was green.
+PROGRESS_METRIC = re.compile(
+    r"First PoC:\s+(\d+) permanent \+\s*(\d+) non-permanent.*?"
+    r"Full PoC:\s+(\d+) permanent \+\s*(\d+) non-permanent",
+    re.S,
+)
+
+
+def counting_rule():
+    """The ledger's prose enumeration: label -> (stated count, [kind names]).
+
+    Returns {} if the note cannot be found at all, which the caller treats as
+    fatal — "the enumeration is absent" must not read like "the enumeration
+    agrees".
+    """
+    text = LEDGER.read_text()
+    out = {}
+    for label, pattern in COUNT_RULE.items():
+        m = pattern.search(text)
+        if not m:
+            continue
+        out[label] = (int(m.group(1)), BACKTICKED.findall(m.group(2)))
+    return out
+
+
+def enumeration_problems():
+    """The three copies of one entry set must agree: the ledger's sample,
+    `ai-context.md`'s sample, and the ledger's counting rule.
+    """
+    problems = []
+    ledger, ledger_dupes, ledger_samples = emitted_entries(LEDGER)
+    context, context_dupes, context_samples = emitted_entries(AI_CONTEXT)
+    problems += ledger_dupes + context_dupes
+
+    if not ledger:
+        return [f"FATAL: {LEDGER.name} emits no boundary entries — the scan is broken"]
+    if not context:
+        return [f"FATAL: {AI_CONTEXT.name} emits no boundary entries — the scan is broken"]
+    for name, n in ((LEDGER.name, ledger_samples), (AI_CONTEXT.name, context_samples)):
+        if n != 1:
+            problems.append(
+                f"{name}: {n} populated `unverified_boundaries.entries` samples — expected "
+                f"exactly 1, because two would let one rot while the other satisfies the "
+                f"agreement below"
+            )
+
+    for name, entries in ((LEDGER.name, ledger), (AI_CONTEXT.name, context)):
+        for kind, perm in sorted(entries.items()):
+            if not isinstance(perm, bool):
+                problems.append(f"{name}: entry {kind!r} has permanent={perm!r}, expected a bool")
+
+    # The flag, not just the name. Flipping `permanent` in one file only was green:
+    # the set comparison below sees names, and the counting rule checks the ledger
+    # side alone, so `ai-context.md` could rot by itself — which is the shape of
+    # the very drift #44 was filed to fix.
+    for kind in sorted(set(ledger) & set(context)):
+        if ledger[kind] is not context[kind]:
+            problems.append(
+                f"entry {kind!r}: permanent={ledger[kind]!r} in {LEDGER.name} but "
+                f"{context[kind]!r} in {AI_CONTEXT.name}"
+            )
+
+    only_ledger = sorted(set(ledger) - set(context))
+    only_context = sorted(set(context) - set(ledger))
+    if only_ledger:
+        problems.append(
+            f"{AI_CONTEXT.name}: missing the entries {only_ledger} that {LEDGER.name} emits "
+            f"— the two samples must agree as a set"
+        )
+    if only_context:
+        problems.append(
+            f"{LEDGER.name}: missing the entries {only_context} that {AI_CONTEXT.name} emits "
+            f"— the two samples must agree as a set"
+        )
+
+    rule = counting_rule()
+    for label in ("permanent", "non-permanent"):
+        if label not in rule:
+            problems.append(
+                f"{LEDGER.name}: the counting rule states no {label!r} enumeration — "
+                f"a count nothing enumerates is the state the note exists to prevent"
+            )
+    if len(rule) < 2:
+        return problems
+
+    for label, (stated, names) in rule.items():
+        if stated != len(names):
+            problems.append(
+                f"{LEDGER.name}: the counting rule says {label} {stated} and enumerates "
+                f"{len(names)} ({names})"
+            )
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            problems.append(f"{LEDGER.name}: the {label} enumeration repeats {dupes}")
+
+    enumerated = set(rule["permanent"][1]) | set(rule["non-permanent"][1])
+    both = sorted(set(rule["permanent"][1]) & set(rule["non-permanent"][1]))
+    if both:
+        problems.append(f"{LEDGER.name}: {both} is counted as permanent AND non-permanent")
+    if enumerated != set(ledger):
+        missing = sorted(set(ledger) - enumerated)
+        extra = sorted(enumerated - set(ledger))
+        problems.append(
+            f"{LEDGER.name}: the counting rule enumerates a different set than the sample emits "
+            f"— unenumerated {missing}, enumerated-but-not-emitted {extra}"
+        )
+
+    # The split itself, not just the total: prose saying `permanent` beside JSON
+    # saying `permanent: false` is the disagreement the counting rule is for.
+    for label, want in (("permanent", True), ("non-permanent", False)):
+        for kind in rule[label][1]:
+            if ledger.get(kind, "missing") is not want:
+                problems.append(
+                    f"{LEDGER.name}: the counting rule lists {kind!r} as {label}, "
+                    f"but the sample emits permanent={ledger.get(kind, 'missing')!r}"
+                )
+
+    # The third copy.
+    m = PROGRESS_METRIC.search(LEDGER.read_text())
+    if not m:
+        problems.append(
+            f"{LEDGER.name}: the progress-metric block is missing or reworded — it is a "
+            f"third copy of these counts and must be comparable"
+        )
+    else:
+        fp_perm, fp_non, full_perm, full_non = (int(g) for g in m.groups())
+        want_perm = sum(1 for v in ledger.values() if v is True)
+        want_non = sum(1 for v in ledger.values() if v is False)
+        if (fp_perm, fp_non) != (want_perm, want_non):
+            problems.append(
+                f"{LEDGER.name}: the progress metric says First PoC {fp_perm} permanent + "
+                f"{fp_non} non-permanent, but the sample emits {want_perm} + {want_non}"
+            )
+        # `Full PoC` is First PoC minus the two paths its own parenthesis names.
+        handled = {"middleware", "event_subscriber"}
+        expect_full_non = want_non - len(handled & set(ledger))
+        if (full_perm, full_non) != (want_perm, expect_full_non):
+            problems.append(
+                f"{LEDGER.name}: the progress metric says Full PoC {full_perm} + {full_non}, "
+                f"but removing {sorted(handled)} from {want_non} non-permanent leaves "
+                f"{expect_full_non} (permanent stays {want_perm})"
+            )
+    return problems
 
 
 def claims_without_enforcement(node, where, problems, key=None, covered=False):
@@ -184,7 +419,7 @@ def main():
         print(f"FATAL: no `kind` values found in {LEDGER} — the scan is broken", file=sys.stderr)
         return 1
 
-    problems = []
+    problems = enumeration_problems()
     samples = 0
 
     for path, line, text in fences(DOCS):
@@ -248,6 +483,7 @@ def main():
 
     print(f"  json samples   {samples}")
     print(f"  ledger kinds   {len(kinds)}")
+    print(f"  ai-context     {len(emitted_entries(AI_CONTEXT)[0])} entries")
     if problems:
         print(f"  violations     {len(problems)}")
         for p in problems:

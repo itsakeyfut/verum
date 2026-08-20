@@ -88,7 +88,16 @@ pub struct GetUserPublicProfile;
 >   point the impl is written nothing can enumerate the set. Measured as #15's P3.
 >   A `Projection`'s `Debug` can print the type name and no more.
 > - Forbid `Deserialize` on a domain, to prevent constructing one from arbitrary
->   values.
+>   values. **Enforceable only for the derives `#[domain]` can see** — measured in
+>   #44: a derive written *above* the attribute is expanded independently of it, so
+>   the check never runs there (`spikes/domain-opacity-sqlx` P42 / P46). What
+>   rejects that position is the macro-owned child module
+>   ([ADR-0010](../adr/0010-domain-constructor-confined-by-module-privacy.md)),
+>   which is why this is a **lint** and not the guarantee
+>   ([ADR-0015](../adr/0015-remedies-state-what-they-do-not-reach.md), ledger path
+>   26). `Default`, `Clone` and `mem::take` are the same route and are banned with
+>   it — the first version of this line named only `Deserialize`, and `Default`
+>   plus `mem::take` invents a Domain from a foreign crate with no string at all.
 > - **Do not claim** mechanical backing for GDPR-style data minimisation until
 >   SELECT-clause generation exists.
 
@@ -231,7 +240,8 @@ The AI Context states that `reads` is metadata only for now.
       "level": "upper_bound_checked",
       "scope": "handle_via_ctx",
       "voided_by": [
-        "domain_repr", "domain_swap", "repository_impl", "unscanned_effect",
+        "domain_repr", "domain_swap", "forged_derive",
+        "aliased_interior_mutability", "repository_impl", "unscanned_effect",
         "middleware", "constructor_body", "malformed_set",
         "upsert_granularity", "event_subscriber"
       ]

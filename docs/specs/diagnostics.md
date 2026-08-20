@@ -111,6 +111,15 @@ error: GET endpoint `GetUser` cannot declare mutations
    |     ^^^^^^^^^^^^^^^^^^^^^^ GET endpoints are read-only by construction
    |
    = help: use PUT / PATCH / POST / DELETE, or remove this declaration
+
+> **"read-only by construction" is about the *declaration*, and stays as written.**
+> The macro rejects declaring `mutates` on a GET, which is exactly what the message
+> says; the same sentence appears in `conditional-effects.md`'s `when` sample and is
+> correct there too. It is **not** a claim about the request's behaviour — middleware
+> is outside the handler scope, and ledger **path 28** writes through a `&self`
+> getter *inside* it. Recorded here rather than hedging the message, because a
+> hedged diagnostic is a worse diagnostic; the scope belongs in the AI Context, where
+> `mutates` carries it per key.
 ```
 
 Type checking (layer 2) catches it too, but the macro's error is more precise, so

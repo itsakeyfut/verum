@@ -1,0 +1,30 @@
+# #44 / ledger path 27 — user-side `dyn` erasure, measured against the SHIPPED
+# `verum::Repo` rather than this spike's model of it.
+#
+# The path dependency is the point. Path 11's remedy is "do not expose
+# `dyn Repository`", and verum does not — so a model that reimplements `Repo`
+# could only show that a reimplementation is erasable. What has to be measured is
+# that the type verum actually exports is, from a crate that only depends on it.
+#
+# `crates/verum` belongs to the root workspace; that does not matter to a path
+# dependency, and this workspace stays independent for the reason the root
+# Cargo.toml records.
+[package]
+name = "downstream"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+verum = { path = "../../../crates/verum" }
+
+[features]
+g1-concrete-erasure = []
+g2-blanket-erasure = []
+g3-dyn-crosses-a-service = []
+g4-erasure-does-not-defeat-req = []
+g5-owned-erasure-needs-static = []

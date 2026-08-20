@@ -260,8 +260,10 @@ where
   E0382 / E0505 ×2 / E0382)
 - **Rust 2024 edition async closures (`AsyncFnOnce`, 1.85+) are required.** The
   `FnOnce(..) -> Fut` form cannot carry the borrow across
-- **The return type is fixed to `Result<()>`.** Otherwise `Ok(ctx)` carries the
-  elevated context out of the scope
+- **The return type is fixed to `Result<()>`** — but it is **not** what closes the
+  scope, and for a named `'req` it closes nothing. §What actually closes the scope,
+  below, is the measurement; ledger path 8 is the row. Stated here because this
+  bullet is what a skimmer reads
 
 ```rust,compile_fail
 let elevated = ctx.when::<C, _>(.., async |ctx, ..| Ok(ctx)).await?;

@@ -32,7 +32,10 @@
 #         that silently compiles nothing.
 #   §9-7  The baseline's cache invalidation recurses, so a new subdirectory
 #         cannot disarm it.
-#   §9-11 The baseline covers *both* crates that host probes.
+#   §9-11 The baseline covers *every* crate that hosts probes — three since #44
+#         added `downstream`. It said "both" while the count was two, which is a
+#         number in a comment doing a job the code should do; the line below
+#         names the crates instead.
 #   §9-12 The toolchain is asserted, not printed. C1's message seeds an M3 UI
 #         test and `docs/rules/test.md` §1.4 judges `.stderr` on 1.85.0; a text
 #         captured on 1.97.1 would be the wrong specification.
@@ -80,7 +83,10 @@ fi
 
 # §9-5: a probe that never recompiled cannot be judged. §9-7: recursive, so
 # adding `app/src/probes/` later does not silently disarm this.
-find fw app -name '*.rs' -not -path '*/target/*' -exec touch {} +
+# `downstream` path-depends on the real `crates/verum`, so that source is touched
+# too: a cached diagnostic from the shipped crate would replay just as happily.
+find fw app downstream ../../crates/verum/src ../../crates/verum-macros/src \
+     -name '*.rs' -not -path '*/target/*' -exec touch {} +
 echo
 
 # ---------------------------------------------------------------------------
@@ -101,6 +107,13 @@ probe() {
     local got="pass"
     [[ $rc -ne 0 ]] && got="fail"
 
+    # A guard whose needle is the empty string matches everything, so the row would
+    # judge nothing but the exit code (#44's review, measured with a fake cargo).
+    if [[ -z "$needle" ]]; then
+        printf 'FATAL: probe %s has an empty needle — it would judge only the exit code.\n' "$id" >&2
+        exit 1
+    fi
+
     local reason="ok"
     if ! grep -qF -- "$needle" <<<"$out"; then
         reason="MISSING(\"$needle\")"
@@ -118,15 +131,16 @@ probe() {
 
 # ---------------------------------------------------------------------------
 # Baseline. Everything below is read against "the design as specified compiles",
-# so if that is false the rest of the table means nothing. §9-11: both crates.
+# so if that is false the rest of the table means nothing. §9-11: every crate that
+# hosts probes.
 # ---------------------------------------------------------------------------
 echo "=== baseline — the design as the specs describe it, minus what D1 shows ==="
 echo "  RPITIT Handler + erasure layer + Box<dyn> router + hyper Service,"
 echo "  Ctx::new pub(crate), Repo without a lifetime, the two surviving when forms."
-if ! "${CARGO[@]}" check -q -p fw -p app --all-targets >/dev/null 2>&1; then
+if ! "${CARGO[@]}" check -q -p fw -p app -p downstream --all-targets >/dev/null 2>&1; then
     echo
     echo "FATAL: the baseline does not compile. Nothing below is interpretable." >&2
-    "${CARGO[@]}" check -p fw -p app --all-targets 2>&1 | grep -E '^error' | head -10 >&2
+    "${CARGO[@]}" check -p fw -p app -p downstream --all-targets 2>&1 | grep -E '^error' | head -10 >&2
     exit 1
 fi
 printf '  %-6s %-6s %-6s  %s\n' "BASE" "pass" "pass" "as specified"
@@ -219,6 +233,40 @@ echo
 # function in app's lib rather than reimplementing it, so gutting a probe body
 # turns a row red (docs/rules/test.md §9-13).
 # ---------------------------------------------------------------------------
+echo "=== (g) #44 / ledger path 27 — the user erases the capability parameters ==="
+echo "  Against the SHIPPED verum::Repo, not this spike's model of it: path 11's"
+echo "  remedy is about what verum exposes, so a reimplementation cannot test it."
+# G1 — a concrete impl of the user's own object-safe trait on a fully declared
+# handle. Local trait, foreign Self: the orphan rule permits it and there is no
+# export verum can withhold that would not also make `Repo` unnameable.
+probe G1 pass 'Finished'                                 check -p downstream --features g1-concrete-erasure
+# G2 — the same as a BLANKET impl. One line covers every capability shape, which
+# is why path 27's remedy ("do not expose dyn Repository") cannot be enforced.
+probe G2 pass 'Finished'                                 check -p downstream --features g2-blanket-erasure
+# G3 — `&dyn` reaching a function with no domain, field set or endpoint in its
+# signature. This is the erasure itself, not just the impl that enables it.
+probe G3 pass 'Finished'                                 check -p downstream --features g3-dyn-crosses-a-service
+# G4 — §9-14's control, and the boundary of the claim: the erasure loses the
+# capability PARAMETERS and does not launder `'req` into `'static`. Path 27 is
+# capability erasure; path 24 was scope escape. Without this row the G series is
+# four pass rows, which score the same whether anything is checked or not.
+probe G4 fail 'lifetime may not live long enough'        check -p downstream --features g4-erasure-does-not-defeat-req
+# G5 — G4's replacement for the claim "`'req` is what stops it". Deleting `'req`
+# from `Repo` leaves G4 RED (the outer `&'1` still cannot outlive `'static`), so
+# G4 passes on an error unrelated to the handle. `Box<dyn Escaping>` is `+ 'static`,
+# so this one requires `Repo<'r, ..>: 'static` and goes GREEN without `'req`.
+probe G5 fail 'lifetime may not live long enough'        check -p downstream --features g5-owned-erasure-needs-static
+# G6 — the existence pin for G1/G2/G3, and the reason it is a test.
+# A `pass` row whose only needle is `Finished` is satisfied by an EMPTY crate:
+# #44's review deleted all three shapes (90 lines) and the suite stayed at
+# `0 unexpected`, then did it again after `const _` pins were added — a pin inside
+# the same `#[cfg]` disappears with the code it points at. The same is true of the
+# pin this spike already had: re-pointing D5c's `#[cfg]` leaves **D5c** green and
+# reddens **D5d** instead, so README's "the existence pin" row names an effect it
+# does not have. A count-bearing marker from a test binary cannot pass vacuously.
+probe G6 pass 'VERUM_G_ERASURE=3'                        test -p downstream --test erasure -- --nocapture
+echo
+
 echo "=== does it run, not just type-check? ==="
 probe B5+ pass 'test result: ok. 10 passed'               test -p app --test live
 echo
@@ -229,7 +277,7 @@ echo
 # gated on `$fail -eq 0`, so any one red row switched off the guard whose whole
 # job is to catch a deleted row — a fail-open found in #39's review (RK-016's
 # eighth instance).
-EXPECTED_ROWS=25
+EXPECTED_ROWS=31
 if [[ $((pass + fail)) -ne $EXPECTED_ROWS ]]; then
     printf 'FATAL: %d rows ran, expected %d — a probe line was removed.\n' \
         "$((pass + fail))" "$EXPECTED_ROWS" >&2

@@ -107,7 +107,7 @@ have **exactly the same enforcement power.** The differences are these.
 
 #### (a) Stating an absence — the decisive difference
 
-A GET's read-only guarantee is the statement "it holds no mutation at all".
+A GET's read-only guarantee is the statement "it **declares** no mutation at all" (path 28: the *contents* of an interior-mutable field type are outside it).
 
 ```rust
 trait ReadOnly: Endpoint<Mutates = (), Creates = (), Deletes = ()> {}
@@ -292,6 +292,17 @@ and `deletes` each carry `enforcement.scope: "handle_via_ctx"` and list
 `middleware` under `voided_by`. When middleware contracts arrive, `middleware`
 leaves `voided_by` and the scope widens. See
 [`unverified-boundaries.md`](./unverified-boundaries.md).
+
+> **And it is narrower than the handler scope too** (ledger **path 28**, #44).
+> `Mutates = ()` is enforced through the *setter's* where clause, so a mutation that
+> never calls a setter is outside it: an interior-mutable field type is written
+> through `&self`, which a GET has, and a foreign crate does it to a correctly
+> loaded Domain with no `&mut` and no capability (run-verified). `read-only (true)`
+> in the block above is therefore true of the **declared effect set** and not of the
+> Domain's contents. This file owns the guarantee
+> ([`README.md`](./README.md)), so it is stated here and not only in the ledger —
+> #44's first version narrowed the ledger's twin section and left this one
+> unqualified.
 
 > **There is no `scope_of_readonly_guarantee` key.** It said what those three keys
 > now say, and it overstated in exactly the way this section warns against — a GET

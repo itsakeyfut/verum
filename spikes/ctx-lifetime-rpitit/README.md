@@ -1,11 +1,13 @@
 # T-M1-02 / #14 — `Ctx<'req, E>` × RPITIT / hyper / async closure
 
 Measured on **rustc 1.85.0** (Verum's MSRV), tokio 1.53.1, hyper 1.11.0,
-hyper-util 0.1.20, http-body-util 0.1.5. 30 packages resolved, 28 of them
-dependencies, 21 not already in the root graph.
+hyper-util 0.1.20, http-body-util 0.1.5. **33** packages resolved since #44 added
+`downstream` (which path-depends on `crates/verum`), 21 not already in the root
+graph. `run.sh` prints the count it measured, and this line is the copy that has
+gone stale twice — once at 27 and once at 30.
 
 ```bash
-bash run.sh          # 22 rows, each with its expected outcome and error text
+bash run.sh          # 31 rows, each with its expected outcome and error text
 ```
 
 > ### The gate this spike set for itself is satisfied
@@ -118,6 +120,40 @@ in `run.sh`.
 | **F4** | #40's decision: a **payload** in, and the framework builds the job's context inside the task | pass — baseline + runtime |
 | **F5** | F4's context re-spawned from inside `Job::run` | fail `E0521` — **the cost F2 pays and F4 does not** |
 | **F6** | a capability handle smuggled through `J::Payload` | fail `E0521` |
+
+### #44 / ledger path 27 — the user erases the capability parameters
+
+Against the **shipped** `verum::Repo`, through a `downstream` crate that path-depends
+on `crates/verum`. Path 11's remedy is a claim about what verum exposes, so a model
+that reimplements the handle could only show that a reimplementation is erasable.
+
+| # | Probe | Expected |
+|---|---|---|
+| **G1** | the user's own object-safe trait implemented on a fully declared handle | pass — a local trait with a foreign `Self` passes the orphan rule |
+| **G2** | the same as a **blanket** impl | pass — one line covers every capability shape, present and future |
+| **G3** | `&dyn` reaching a service with no domain, field set or endpoint in its signature | pass — the erasure itself |
+| **G4** | the erasure used to launder `'req` into `'static` (borrowed) | fail `lifetime may not live long enough` |
+| **G5** | the same, **owned** — `Repo<'r, ..>` into a `Box<dyn Trait>` | fail `lifetime may not live long enough` — **the boundary**. G4 alone does not measure it: delete `'req` from `Repo` entirely and G4 stays red, because the outer `&'1` still cannot outlive `'static`. G5 goes green without `'req` |
+| **G6** | all three erasure shapes referenced from a test binary | pass `VERUM_G_ERASURE=3` — the existence pin. Deleting G1–G3 used to leave the suite at `0 unexpected`; it now fails the **baseline** |
+
+G4 is what stops the G series from being four `pass` rows. It also keeps path 27
+apart from path 24: the erasure loses the capability **parameters** and does not
+defeat the request lifetime, so #39's closure is not weakened by it. Path 27 is
+capability erasure; path 24 was scope escape.
+
+Planted before being trusted: deleting G2's blanket impl turns it **red**, and so
+does *narrowing* it to one concrete shape — so the row measures the coverage and not
+merely that an impl exists. Deleting G1's impl turns G1 red, and deleting the impl
+G3 leans on turns G3 red.
+
+Two vacuity holes were found this way and closed. G1 and G2 originally declared a
+trait and an impl with **no caller**, which compiles just as well with the impl
+deleted; they now have call sites. G3 originally put the `&dyn` coercion in a
+function body, and replacing it with a direct method call left the row green — it was
+measuring "the impl resolves", which G1 and G2 already measure. The coercion is now
+named in a signature. What is *not* claimed is that this is the only place it can
+happen: returning `&Repo` again keeps G3 green, because the coercion moves to
+`service`'s parameter. The finding survives the move, which is the point.
 
 ---
 
@@ -410,11 +446,11 @@ by reading:
 | gut `d1_when_lends`'s body | B5+ `pass → fail` |
 | gut `e1_handle_escapes`'s body | B5+ `pass → fail` |
 | delete one runtime test | B5+ count assertion (`8 passed`) |
-| **delete one `probe` line from `run.sh`** | `FATAL: 21 rows ran, expected 22` |
-| a feature-name typo in `#[cfg(..)]` | baseline `FATAL`, from `unexpected_cfgs = "deny"` — set in all three compilation units |
+| **delete one `probe` line from `run.sh`** | `FATAL: 30 rows ran, expected 31` |
+| a feature-name typo in `#[cfg(..)]` | baseline `FATAL`, from `unexpected_cfgs = "deny"` — set in all **four** compilation units since `downstream` |
 | **gut `d5e_syncbody_leak`'s body** (return the sentinel directly) | B5+ `pass → fail` — the response assertion still passes, the **store** assertion does not |
 | **remove `f2_owned_jobctx`'s sleep** | B5+ `pass → fail` — f2's pre-sleep assertion |
-| **re-point D5c's `#[cfg]` at another *declared* feature** | D5c `pass → fail`, `MISSING("Finished")` — the existence pin |
+| **re-point D5c's `#[cfg]` at another *declared* feature** | ⚠️ **this row is wrong.** Re-measured in #44's review: **D5c stays green** and **D5d** reddens as collateral. A `const _` beside gated code pins a *signature*, not *existence* — delete the gate and the pin goes with it, leaving `Finished`. The pin that does work is a count-bearing needle from a test binary (**G6**), which is why G1–G3's items are ungated |
 
 **All eleven rows were planted and observed on 2026-08-16** (#48), against the
 tree as it stands. The numbers are measured, not edited.
