@@ -1,0 +1,19 @@
+[package]
+name = "fw"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# The two shapes under comparison. Neither is on by default, so the default build
+# is the state `crates/verum` is in today.
+#
+# per-domain: what ships now — the derive emits one seal impl per declared domain,
+# so M2 must expose the seal for generated code to name it.
+per-domain = []
+# blanket: #41 / ADR-0013 — nothing is emitted per domain, so the seal is never
+# named downstream and can stay private forever.
+blanket = []

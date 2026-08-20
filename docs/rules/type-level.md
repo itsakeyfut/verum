@@ -306,15 +306,28 @@ error[E0283]: type annotations needed
 note: multiple `impl`s satisfying `(Mn, (Mn, ())): Has<Mn, _>` found
 ```
 
-There are two routes to it.
+There are **three** routes to it.
 
 1. A user writes `mutates = [User::email, User::email]`.
 2. **Appending for a `when` scope produces a duplicate** — `emits = [X]` together
    with `when(C) => { emits = [X] }`.
+3. **A duplicate in `domains`** — `domains = [User, User]`. This route is new with
+   [ADR-0013](../adr/0013-includes-is-a-blanket-impl.md): `Includes<D>` had no index
+   parameter, so a duplicate produced a duplicated `impl Includes<User> for GetUser`
+   and rustc rejected it **at the declaration** with `E0119`. Under the blanket
+   `Includes<D, I>` the declaration is fine and **every use site** gets `E0283`
+   instead — measured, with the raw `Has` impls leaking into the note, which
+   `do_not_recommend` cannot suppress.
 
 The second is a legitimate contract, so **the derive deduplicates before
-appending.** The first is rejected by the macro
+appending.** The first and third are rejected by the macro
 ([`proc-macro.md`](./proc-macro.md)).
+
+> **Route 3 is why the rejection has to be at the declaration.** Routes 1 and 2 are
+> about effect sets, where a duplicate was always a macro-layer concern. Route 3
+> moved a *declaration-site* `E0119` into a *use-site* `E0283`, so the error now
+> lands on `ctx.users()` rather than on the contract — the exact swap `do_not_recommend`
+> exists to prevent, in a position where it has nothing to suppress.
 
 ---
 

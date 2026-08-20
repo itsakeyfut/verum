@@ -333,7 +333,13 @@ non-exposure.
 > `SealedEndpoint` becomes nameable, **a user crate can declare any capability
 > set directly** — stronger than forging `Has`, which only queries a set someone
 > else chose. That is ledger path 12, and it outweighs path 13 (`Includes`).
-> When `__private` arrives in M2, re-verify both 12 and 13.
+> When `__private` arrives in M2, re-verify both 12 and 13 — **but not with the
+> procedure this line used to imply.** #41 measured the recorded procedure green on a
+> tree where the forgery compiled, because it exercised only the trait impl. The
+> attacker writes **every impl the derive writes**. Path 13 is now closed by removing
+> the derive's need to name its seal ([ADR-0013](../adr/0013-includes-is-a-blanket-impl.md));
+> path 12 reopens under the impl-emitting shape and is `forged_endpoint` in the AI
+> Context. Detail in `api-surface.md` §2.
 
 ### Pin the version
 

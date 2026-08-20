@@ -1,0 +1,24 @@
+[package]
+name = "downstream"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fw.workspace = true
+
+[features]
+# S1: the attacker writes only the trait impl — the shape the ledger's recorded
+# re-verification procedure imagines.
+s1-trait-only = ["fw/per-domain"]
+# S2: the attacker writes the seal impl TOO. This is the one that matters.
+s2-seal-and-trait = ["fw/per-domain"]
+# S3/S4: the same two attacks against the blanket shape.
+s3-blanket-trait-only = ["fw/blanket"]
+s4-blanket-coherence = ["fw/blanket"]
+# S5: legitimate use of the blanket shape, so S3/S4's rejection cannot just mean
+# the shape is unusable.
+s5-blanket-legitimate = ["fw/blanket"]

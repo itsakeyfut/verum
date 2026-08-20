@@ -1,0 +1,20 @@
+# T-M1-xx / #41 — spike: are the derive-facing seals forgeable once M2 exposes them?
+#
+# An INDEPENDENT workspace, for the same reason as the sibling spikes: the question
+# needs a *downstream* crate, and the probe deliberately exposes a module that
+# `crates/verum` keeps `pub(crate)`. Doing that inside the real crate would mean
+# committing the exposure to measure it.
+[workspace]
+resolver = "3"
+members = ["fw", "downstream"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+# Reaches the integration-test crates too, unlike an inner `#![deny]`.
+[workspace.lints.rust]
+unexpected_cfgs = "deny"
+
+[workspace.dependencies]
+fw = { path = "fw" }

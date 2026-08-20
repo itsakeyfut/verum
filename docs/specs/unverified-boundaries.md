@@ -190,9 +190,9 @@ alternative pushes people onto unchecked routes).
 | 9 | `Ctx::for_test()` as a god-mode constructor | Require a sealed `Runtime` token ([ADR-0006](../adr/0006-runtime-sealed-token.md), still `proposed`); testing goes through an API with a fixed endpoint type | ⚠️ **Stated, not closed.** What T-M1-02 measured is **visibility** — `Ctx::new` is `pub(crate)`, so `app` gets `E0624`. **No seal was measured**, and visibility alone was measured to leak (note below) |
 | 10 | A `PgPool` on the endpoint struct | `#[endpoint]` rejects anything but a unit struct | **Closed in the First PoC** |
 | 11 | Passing a `dyn Repository` to a service (the type parameters vanish) | Do not expose `dyn Repository`; parameterise the service by capabilities too | **Closed in the First PoC** |
-| 12 | A hand-written `impl Endpoint` declaring arbitrary capabilities | Seal `Endpoint` | **Closed in the First PoC** |
-| 13 | `impl Includes<Order> for User` (a local type, so it passes the orphan rule) | Seal `Includes` | ⚠️ **Provisionally closed** (T-M0-06 / #6; with the re-verification condition below) |
-| 14 | Forging `impl Field<...>` (forging `Field::NAME` forges the column name in generated SQL) | Seal it | **Closed in the First PoC** (`Field` unimplemented) |
+| 12 | A hand-written `impl Endpoint` declaring arbitrary capabilities | Seal `Endpoint` | **Closed in the First PoC** (nobody can satisfy the seal — no macros exist yet). ⚠️ **Reopens at M2 under the assumed emission shape** (#41, measured): if `#[endpoint]` emits `impl Endpoint for X` then `SealedEndpoint` must be nameable downstream, and proc-macro output is syntactically indistinguishable from hand-written code. A forged `Endpoint` declares any `Domains` — **and, once they exist, any `Reads` / `Mutates` / `Creates` / `Deletes` / `Emits` / `Calls`, so it dominates forging `Includes`**. Bounded two ways, both measured: `impl Endpoint for other_crate::X` is `E0117` (confined to the crate owning the endpoint type) and widening a set the derive already emitted is `E0119` (an attacker must introduce a *new* local type). ⚠️ **"Cannot be closed by types" was asserted and then refuted in review** — emitting a *type* rather than an impl (`pub type X = EndpointOf<Tag, Domains>`) leaves `derive_facing` empty and makes a downstream `impl Endpoint` `E0277`; compiled, though unchecked against `Reads`/`Mutates`/routing. **The emission shape is #60's to decide and is open, not closed.** AI Context: `forged_endpoint`, `permanent: true`; per ARK-005 an inventory check is the fallback *if* the impl-emitting shape is taken. [ADR-0013](../adr/0013-includes-is-a-blanket-impl.md) |
+| 13 | `impl Includes<Order> for User` (a local type, so it passes the orphan rule) | ~~Seal `Includes`~~ → **make `Includes` a blanket impl**, so the derive never names its seal and the seal stays `pub(crate)` for good ([ADR-0013](../adr/0013-includes-is-a-blanket-impl.md), #41) | ✅ **Closed, and it survives M2** — measured downstream: `spikes/seal-after-m2` S3 rejects the forgery with Verum's own wording, S5 confirms a declared domain still resolves. ⚠️ **The seal alone did not survive**: with one impl per domain, exposing `derive_facing` as M2 requires lets an attacker write the seal impl too and two undeclared domains pass (S2). Not implemented yet — needs `Endpoint` (#60). Conditional on path 12: a forged `Endpoint` declares any `Domains`, and the blanket faithfully reports it |
+| 14 | Forging `impl Field<...>` (forging `Field::NAME` forges the column name in generated SQL) | Seal it | **Closed in the First PoC** (`Field` unimplemented). ⚠️ **Reopens at M2** (#41): `Field::NAME` is per-field *data*, so the derive must emit one impl per field and must name the seal. **The blanket trick that saved path 13 does not apply** — there is nothing to derive the value from. Forging `NAME` forges a column name in generated SQL, so this is the most damaging of the four. AI Context: `forged_field`, `permanent: true` |
 | 14a | `impl Has<Elem, Idx> for <set>` — forging membership itself. **The head position (`Here`) and non-head positions (`There<_>`) are separate routes** | Seal `Has`, **and make the seal's recursive impl conditional too** | ✅ **Closed** (T-M0-08 / #8; `has_cannot_be_forged.rs` + `has_cannot_be_forged_at_depth.rs`) — read the note below |
 | 14b | `impl ConsList for MyType` — forging the shape proof, making a malformed set look well-formed | Seal `ConsList` | ✅ **Closed** (T-M0-07 / #7; `cons_list_cannot_be_forged.rs`). The tuple shape is also closed by the orphan rule (E0117) (re-checked in T-M0-08) |
 | 14c | `impl Index for MyIdx` — forging the position of membership | Seal `Index` | ✅ **Closed** (T-M0-07 / #7; `index_cannot_be_forged.rs`). `There<MyIdx>` and `There<There<MyIdx>>` are closed by the orphan rule too (re-checked in T-M0-08) |
@@ -293,18 +293,43 @@ alternative pushes people onto unchecked routes).
 > until the trait in question is implemented at M2 (`Has` was split out as 14a and
 > closed in T-M0-08). Do not treat the foundation landing as closing them all.
 >
-> **⚠️ Why it is provisional (discovered in T-M0-07's review)**: path 13 is closed
-> today because **nobody can satisfy `SealedIncludes<D>`** — `verum-macros` emits no
-> macros at all. And as [`../rules/api-surface.md`](../rules/api-surface.md) §2
-> records, **a proc macro's output resolves in the calling crate and so cannot reach
-> `pub(crate) mod private`** (E0603, measured). M2 will be forced to introduce
-> `#[doc(hidden)] pub mod __private`, and §2 itself says that is the moment the
-> seal's strength drops.
+> **⚠️ Why it was provisional, and what the provisional closure got wrong**: path 13
+> was closed because **nobody could satisfy `SealedIncludes<D>`** — `verum-macros`
+> emits no macros at all. And as [`../rules/api-surface.md`](../rules/api-surface.md)
+> §2 records, **a proc macro's output resolves in the calling crate and so cannot
+> reach `pub(crate) mod private`** (E0603, measured). M2 is forced to introduce
+> `#[doc(hidden)] pub mod __private`, and §2 says that is the moment the seal's
+> strength drops. It is worse: the seal **stops working**, and #41 measured it (S2).
 >
-> **So today's green is not evidence of M2's green.** The re-verification
-> condition: after `__private` is introduced, with the derive emitting one domain's
-> seal, confirm in both directions that `impl Includes<undeclared>` **is E0277** and
-> that a declared one **compiles** (the same procedure used in T-M0-06).
+> ### The re-verification procedure recorded here was itself defective (#41)
+>
+> It read: *"after `__private` is introduced, with the derive emitting one domain's
+> seal, confirm in both directions that `impl Includes<undeclared>` is E0277 and that
+> a declared one compiles."*
+>
+> **Run verbatim on a tree where the forgery compiles, it is green.** That is probe
+> **S1**, and probe **S2** — the same tree — compiles four lines that pass two
+> undeclared domains through the Architecture Contract. The procedure models an
+> attacker who does **not** write the seal impl. Once the seal is public, the attacker
+> writes the seal too, because proc-macro output is syntactically indistinguishable
+> from hand-written code.
+>
+> **The attacker model any seal procedure must assume**, stated so it is not
+> re-derived wrongly: *the attacker can write every impl the derive can write.* A
+> procedure that only exercises the trait impl tests nothing about a public seal.
+>
+> This is the **fourth instance** of one class — #6 (type parameters), #8 (recursion),
+> #9 (a bound on a parameter not in `Self`) — and the first where the defect is in a
+> **verification procedure** rather than in an implementation. `api-surface.md` §2's
+> rule that a closure's justification must cover every impl position now applies to
+> procedures as well as to seals.
+>
+> **The replacement is not a better procedure but a different mechanism**: path 13 is
+> closed by making `Includes` a blanket impl, so the derive never names the seal and
+> the seal never becomes public. See [ADR-0013](../adr/0013-includes-is-a-blanket-impl.md),
+> and `spikes/seal-after-m2/` for S1–S5 including **S4, which refutes the reason #41
+> originally gave** (coherence does *not* reject the competing impl — it judges the two
+> disjoint exactly where the blanket does not apply).
 >
 > **That it stays closed once the derive lands** is the point of this closure. The
 > seal was originally written as `Sealed` (over `Self` only), and a Tier-2 review
@@ -578,6 +603,16 @@ An unchecked boundary is **always** emitted in the AI Context.
         "permanent": false
       },
       {
+        "kind": "forged_endpoint",
+        "detail": "at M2 the derive must emit `impl Endpoint for X`, so its seal is nameable downstream and proc-macro output is indistinguishable from hand-written code. A forged `Endpoint` declares any `Domains` \u2014 and, once they exist, any `Reads` / `Mutates` / `Creates` / `Deletes` / `Emits` / `Calls`, so it dominates forging `Includes` itself. Confined to the crate that owns the endpoint type (E0117) and cannot widen an endpoint the derive already emitted (E0119); a blanket `impl<D> Endpoint for Any<D>` covers unboundedly many types from one impl (path 12)",
+        "permanent": true
+      },
+      {
+        "kind": "forged_field",
+        "detail": "`Field::NAME` is per-field data, so the derive must emit one impl per field and must name the seal \u2014 the blanket shape that closes path 13 cannot apply, because there is nothing to derive the value from. Forging `NAME` forges a column name in generated SQL (path 14)",
+        "permanent": true
+      },
+      {
         "kind": "service_body",
         "detail": "the observed_effects scan is neither complete nor sound: it cannot leave its own item (free functions, sibling impls, macro expansions), it matches receivers by spelling (a renamed ctx parameter voids every key), and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
         "permanent": false
@@ -613,9 +648,9 @@ Widening the contract reduces the entries in `unverified_boundaries`. That count
 is the progress metric.
 
 ```text
-First PoC:  3 permanent + 9 non-permanent
-Full PoC:   3 permanent + 6 non-permanent (middleware and events handled)
-Later:      3 permanent + 0 non-permanent
+First PoC:  5 permanent + 9 non-permanent
+Full PoC:   5 permanent + 6 non-permanent (middleware and events handled)
+Later:      5 permanent + 0 non-permanent
 ```
 
 `permanent` never reaches zero. Not hiding that is this file's purpose. And the
@@ -624,12 +659,22 @@ what has been found, so a *rising* count is a review working, not a regression.
 
 > **The counting rule** (stated explicitly because a review noted "the number
 > differs every time it is counted"): count **one-to-one with the entries emitted
-> in the AI Context's `unverified_boundaries.entries`.** permanent 3 =
-> `condition_body` (20) / `row_scope` (row-level permissions) / `domain_swap` (2).
+> in the AI Context's `unverified_boundaries.entries`.** permanent 5 =
+> `condition_body` (20) / `row_scope` (row-level permissions) / `domain_swap` (2) /
+> **`forged_endpoint` (12)** / **`forged_field` (14)**.
 > non-permanent 9 = `middleware` (16) / `event_subscriber` (15) /
 > `repository_impl` (17) / `constructor_body` (18) / `upsert_granularity` (19) /
 > `domain_repr` (21) / `malformed_set` (14f) / `service_body` (22) /
 > `uncapped_read` (23).
+>
+> **Paths 12 and 14 went from 3 to 5 permanent in #41.** Both were "Closed in the
+> First PoC" only because `verum-macros` emits nothing yet; #41 measured that they
+> reopen at M2 and cannot be closed by types, which makes them `permanent: true`.
+> The first version of that change flipped their *ledger* rows and added **no**
+> entries here — leaving two paths open and unemitted, which is the one state this
+> file exists to make impossible ("An unchecked boundary is **always** emitted in
+> the AI Context", above). Caught in review. `check_json.py` could not see it,
+> because nothing was added for it to disagree with.
 >
 > **Paths 18 and 19 were previously uncounted** because neither had a `kind` name
 > decided, and this definition excluded 19 while counting 18 — so what the

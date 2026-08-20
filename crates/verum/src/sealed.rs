@@ -207,26 +207,103 @@ mod tests {
 
     /// The `seal!`-declared names in one source, as a pure function so it can be
     /// unit-tested against a known input instead of only against the real tree.
+    ///
+    /// # Why this does not match a fixed line
+    ///
+    /// It used to require a line trimming to exactly `seal! {`. `macro_rules!`
+    /// accepts any delimiter and any line breaks, so **`seal! { SealedEvil }` and
+    /// `seal!(SealedEvil);` were invisible** — measured, and the consequence was
+    /// three guards falling silent at once, because all three key off
+    /// [`declared_seals`]:
+    ///
+    /// * the derive-facing/structural split below (a new seal reached neither the
+    ///   structural set nor the allowlist, so the loop never examined it),
+    /// * `every_seal_impl_should_declare_whether_it_mirrors_its_trait` (it stopped
+    ///   requiring a marker for that seal's impls),
+    /// * `seals_should_only_be_declared_through_the_macro` (satisfied — it *was*
+    ///   the macro).
+    ///
+    /// The `>= 6` floor did not help either: a *new* one-lined seal keeps the count
+    /// at 6. Found in #41's review, in the change that made the split guard depend
+    /// on this function.
     fn seal_names_in(src: &str) -> Vec<String> {
         let mut names = Vec::new();
-        let mut in_seal = false;
+        let mut pending = false;
         for line in src.lines() {
             let t = line.trim();
-            if t == "seal! {" {
-                in_seal = true;
+
+            // Any invocation, any delimiter. `strip_prefix` rather than `contains`
+            // so a mention inside a doc comment or a string does not count.
+            if let Some(rest) = t.strip_prefix("seal!") {
+                let rest = rest.trim_start().trim_start_matches(['{', '(', '[']).trim();
+                if rest.is_empty() {
+                    pending = true; // multi-line form; the name is below
+                } else {
+                    names.push(push_name(rest));
+                }
                 continue;
             }
-            if in_seal {
-                if t.starts_with("///") || t.is_empty() {
+
+            if pending {
+                if t.starts_with("///") || t.starts_with("//") || t.is_empty() {
                     continue;
                 }
-                if t != "}" {
-                    names.push(t.split('<').next().unwrap_or(t).trim().to_string());
+                if !matches!(t, "}" | ")" | "]") {
+                    names.push(push_name(t));
                 }
-                in_seal = false;
+                pending = false;
             }
         }
         names
+    }
+
+    /// `SealedX<D, I> }` -> `SealedX`. Shared by both invocation forms so they
+    /// cannot drift apart.
+    fn push_name(raw: &str) -> String {
+        raw.split('<')
+            .next()
+            .unwrap_or(raw)
+            .trim_end_matches([';', '}', ')', ']', ','])
+            .trim()
+            .to_string()
+    }
+
+    /// `seal_names_in` must not depend on the invocation's delimiter or line
+    /// breaks. Every form below was measured to slip past the old line-exact match,
+    /// and each one silenced three guards at once (#41's review).
+    #[test]
+    fn seal_names_in_should_find_every_invocation_form() {
+        let cases = [
+            ("multi-line", "    seal! {\n        SealedA\n    }"),
+            ("one-line brace", "    seal! { SealedA }"),
+            ("parens", "    seal!(SealedA);"),
+            ("brackets", "    seal![SealedA];"),
+            (
+                "generic, multi-line",
+                "    seal! {\n        SealedA<D, I>\n    }",
+            ),
+            ("generic, one-line", "    seal! { SealedA<D, I> }"),
+            (
+                "doc comment first",
+                "    seal! {\n        /// docs\n        SealedA\n    }",
+            ),
+        ];
+        for (what, src) in cases {
+            assert_eq!(
+                seal_names_in(src),
+                vec!["SealedA".to_string()],
+                "the {what} form of `seal!` was not recognised — a seal declared this \
+                 way is invisible to declared_seals(), and every guard that derives \
+                 from it falls silent"
+            );
+        }
+
+        // And a mention that is not an invocation must not be picked up, or the
+        // structural set fills with noise and the loop below reports on prose.
+        assert!(
+            seal_names_in("/// see seal! { SealedGhost } in the docs").is_empty(),
+            "a `seal!` inside a comment was counted as a declaration"
+        );
     }
 
     /// The names `lib.rs` re-exports, i.e. the traits a downstream crate can
@@ -564,47 +641,185 @@ mod tests {
     /// §9 rule 7 is about enumerating a set of files, and this check's subject is
     /// one module's contents.
     ///
-    /// **That is only true of the file scope. The name list below is hardcoded,
-    /// and that is a live hole — #65.** Moving an existing structural seal into
-    /// `derive_facing` fails here; *adding* a new one does not, and M2 is exactly
+    /// # The list is derived, not hardcoded (#41 / #65)
+    ///
+    /// It used to name five structural seals literally, which defended those five
+    /// against *relocation* and did not notice a **new** structural seal appearing
+    /// on the derive-facing side. Measured: `seal! { SealedEffectSet }` inside
+    /// `derive_facing` left the suite green. That mattered because M2 is exactly
     /// when `SealedEndpoint` / `SealedField` / `SealedCondition` arrive in this
-    /// module. A `pub use super::private::*;` also passes. Both measured. The fix
-    /// is to derive the list from `declared_seals()` minus an explicit allowlist,
-    /// the way `seals_should_only_be_declared_through_the_macro` now derives its
-    /// own — tracked separately because the defect is *what is named*, not *where
-    /// it lives*.
+    /// module, so the one moment a new seal could slip in was the moment the guard
+    /// was blind to.
+    ///
+    /// Now the structural set is **derived** as `declared_seals()` minus an
+    /// explicit derive-facing allowlist. A newly declared seal therefore defaults
+    /// to "structural", and every exception is a visible one-line diff — RK-016's
+    /// rule 7 applied to *what is named* rather than to *where it lives*, which is
+    /// the same inversion `check-api-boundary.sh` took in #69.
     #[test]
     fn structural_seals_should_not_be_reachable_through_the_derive_facing_module() {
+        let seals = declared_seals();
         let src = include_str!("sealed.rs");
-        let (_, after) = src
-            .split_once("pub(crate) mod derive_facing {")
-            .expect("derive_facing module not found");
-        // Only the module body. Without this bound the slice runs on into this very
-        // test, whose own list of seal names would match and fail it — the check
-        // would then be reporting on itself rather than on the module.
-        let (derive_facing, _) = after
-            .split_once("\n}\n")
-            .expect("derive_facing module is not closed by a top-level brace");
 
-        for structural in [
-            "SealedConsList",
-            "SealedIndex",
-            "SealedHas",
-            "SealedAppend",
-            "SealedLookup",
-        ] {
+        // The module body, delimited by **counting braces** rather than by looking
+        // for the next `\n}\n`. Three separate reviews found the string form
+        // fragile, and the third one bit: with the module written `{}` — which is
+        // exactly ADR-0013's end state — the slice ran on past the closing brace
+        // and swallowed `private`, so the loop below reported on the wrong module.
+        // Re-indenting a `}` to column 0 inside the body truncated it the other way,
+        // leaving a later re-export outside the slice entirely.
+        //
+        // Anchoring on the declaration and matching braces is independent of
+        // formatting, which is what RK-016 asks of a guard: do not depend on where
+        // or how the thing is written.
+        let decl = "pub(crate) mod derive_facing";
+        let start = src.find(decl).expect("derive_facing module not found");
+        let open = start
+            + src[start..]
+                .find('{')
+                .expect("derive_facing has no opening brace");
+        let mut depth = 0usize;
+        let mut end = None;
+        for (i, c) in src[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(open + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end = end.expect("derive_facing is not closed");
+        let derive_facing = &src[open + 1..end];
+
+        // The declaration must be the real one, not this test's own mention of it.
+        // `find` takes the first occurrence and the module is declared above the
+        // test module, so this holds — but assert it rather than rely on ordering,
+        // because a reviewer measured the slice silently retargeting onto the test's
+        // own text when the declaration was reformatted.
+        let tests_mod = src.find("mod tests {").expect("test module not found");
+        assert!(
+            start < tests_mod,
+            "the `derive_facing` declaration was found at {start}, after the test module \
+             at {tests_mod} — the slice is reading this test's own source, not the module"
+        );
+
+        // The ONE list that is written out, and it is the permissive one. Adding a
+        // seal without touching this defaults it to "structural", so the failure
+        // direction is loud rather than silent.
+        //
+        // `SealedIncludes` is on it today and is expected to LEAVE it: #41 / ADR-0013
+        // make `Includes` a blanket impl, after which the derive never names its seal
+        // and it becomes structural. When that lands, delete the entry — the guard
+        // then requires `derive_facing` to hold nothing at all, which is the strongest
+        // state and the one M2 should be pushed towards.
+        const DERIVE_FACING_ALLOWLIST: &[&str] = &["SealedIncludes"];
+
+        // Every allowlist entry must name a seal that actually exists. The first
+        // version compared `structural.len() >= seals.len() - ALLOWLIST.len()`,
+        // which is **true for every possible input** — `structural.len()` is
+        // `seals.len()` minus the entries that *matched*, and matches are at most
+        // the allowlist's length. Measured: a bogus entry left the suite green, so
+        // the assertion could not detect the defect its own message described.
+        // Worse, the only input that could fail it underflows a `usize` and panics
+        // before the message is reached.
+        let unknown: Vec<&&str> = DERIVE_FACING_ALLOWLIST
+            .iter()
+            .filter(|a| !seals.iter().any(|s| s == *a))
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "DERIVE_FACING_ALLOWLIST names seal(s) that are declared nowhere: {unknown:?}. \
+             A stale entry silently widens what `derive_facing` may hold — declared: {seals:?}"
+        );
+
+        let structural: Vec<&String> = seals
+            .iter()
+            .filter(|n| !DERIVE_FACING_ALLOWLIST.contains(&n.as_str()))
+            .collect();
+
+        for name in structural {
             assert!(
-                !derive_facing.contains(structural),
-                "`{structural}` is a structural seal and must not be declared in or \
+                !derive_facing.contains(name.as_str()),
+                "`{name}` is a structural seal and must not be declared in or \
                  re-exported through `derive_facing` — M2 exposes that module, which \
-                 would reopen unverified-boundaries.md 14a–14e"
+                 would reopen unverified-boundaries.md 14a–14e. If it is genuinely \
+                 derive-facing, add it to DERIVE_FACING_ALLOWLIST so the exception is \
+                 a visible diff"
             );
         }
 
-        // And the derive-facing set is exactly what M2 is allowed to expose.
+        // No import in this module may glob, or name `private`, or relay through
+        // another module. The first version matched the single literal
+        // `use super::private::*`, and review walked past it three ways — all
+        // measured green: `pub use crate::sealed::private::*;` (absolute path),
+        // `use super::private as p; pub(crate) use p::*;` (aliased module), and a
+        // two-hop `mod relay { pub use super::private::SealedHas as R; }` followed
+        // by `pub use super::relay::*;`. Each exposes structural seals at M2 while
+        // naming none of them, so the name loop above is blind to all three.
+        //
+        // Matching the *shape* of the import rather than its spelling is the only
+        // form that closes a family rather than an instance — RK-016 rule 7.
+        for (n, line) in derive_facing.lines().enumerate() {
+            let t = line.trim_start();
+            if !(t.starts_with("use ")
+                || t.starts_with("pub use ")
+                || t.starts_with("pub(") && t.contains(" use "))
+            {
+                continue;
+            }
+            assert!(
+                !t.contains('*'),
+                "derive_facing line {n}: `{t}` is a glob import. A glob exposes every \
+                 structural seal at M2 while naming none, so the name loop above cannot \
+                 see it. Import each derive-facing seal explicitly."
+            );
+            assert!(
+                !t.contains("private"),
+                "derive_facing line {n}: `{t}` names the structural-seal module. Nothing \
+                 in `derive_facing` may reach into `private` — M2 exposes this module."
+            );
+        }
+
+        // A relay module inside `derive_facing` would launder the import past both
+        // checks above, so no nested module is allowed here either.
         assert!(
-            derive_facing.contains("SealedIncludes"),
-            "`SealedIncludes` should be the derive-facing seal"
+            !derive_facing.contains("mod "),
+            "`derive_facing` declares a nested module. A relay module can re-export \
+             `private`'s seals under new names and neither the name loop nor the import \
+             checks above would see it (measured in #41's review)."
+        );
+
+        // Vacuity has two causes and they need separating, because the first
+        // version conflated them and turned the *target* state red. Its message
+        // said "the module-body slice has drifted" for a module that was
+        // legitimately empty — which is the state the allowlist comment above tells
+        // the #60 implementer to reach.
+        //
+        // (a) the slice broke: it is empty, or it swallowed the whole file.
+        // Only the *whole-file* case indicates drift. An **empty** body does not:
+        // brace counting makes the slice exact, so `mod derive_facing {}` yields
+        // zero bytes and that is the correct answer — and it is ADR-0013's end
+        // state. The first version asserted non-emptiness and turned that state red
+        // (measured), which is the same defect in a new place.
+        assert!(
+            derive_facing.len() < src.len(),
+            "the `derive_facing` module-body slice swallowed the whole file \
+             ({} bytes of {}) — every check above would be reporting on the wrong text",
+            derive_facing.len(),
+            src.len()
+        );
+        // (b) the allowlist expects a seal here, so one had better be present. When
+        // the allowlist is empty — ADR-0013's end state — an empty module is correct
+        // and this says nothing.
+        assert!(
+            DERIVE_FACING_ALLOWLIST.is_empty() || derive_facing.contains("Sealed"),
+            "the allowlist expects {} derive-facing seal(s) but the module declares none",
+            DERIVE_FACING_ALLOWLIST.len()
         );
     }
 
