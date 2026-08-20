@@ -14,15 +14,17 @@ Related: [`unverified-boundaries.md`](./unverified-boundaries.md).
 the difference the detector.**
 
 There are two goals and they require separate mechanisms. "Leave no bypass" =
-upper bound = type enforcement (already in place); "leave no lie" = lower bound =
-generation (types cannot produce it in principle). **The difference between the
-two solves exactly the open problem in §Detecting over-declaration below.**
+upper bound = type enforcement (already in place). "Leave no lie" **wanted** a lower
+bound from generation — and [ADR-0014](../adr/0014-syntactically-present-replaces-observed.md)
+abandoned it: #37 measured that token presence is neither a subset nor a superset of
+what runs. What generation gives is `syntactically_present`, and the goal's remaining
+mechanism is *stating* the gap in `unverified_boundaries`.
 
 | Decided | Contents |
 |---|---|
-| Approach | Keep type enforcement as it is, plus generate `observed_effects` by scanning `handle`'s tokens |
-| Scope | The First PoC covers **one item — and not all of it** (T-M1-07: the scan matches receivers by spelling and cannot follow a call into another item), stated in the AI Context as `scope: "handle_only"` |
-| Over-declaration | **CI fails.** None of the three defence layers — a fourth mechanism at build time. The `@service` escape records its own use |
+| Approach | Keep type enforcement as it is, plus generate `syntactically_present` by scanning `handle`'s tokens |
+| Scope | The First PoC covers **one item — and not all of it** (T-M1-07: the scan matches receivers by spelling and cannot follow a call into another item), stated in the AI Context as `scope: "ctx_spelled_same_item"` |
+| Over-declaration | **CI warns** (was "fails" — #42 / ADR-0014). None of the three defence layers — a fourth mechanism at build time. It catches a declared effect **nowhere written** in the item; it cannot see a declared-but-**dead** one, because `if false { .. }` is in both sets (probes D1/D2). The `@service` escape records its own use |
 | Verifying the premise | **Ran 2026-08-16 as T-M1-07 (#37): the premise does not hold.** Three of five contract keys recover; the scan is neither complete nor sound. Originally added to Phase 1 as spike **T-M1-07** (whether token scanning works is unverified) |
 
 The full account and the four rejected options are in
@@ -79,7 +81,7 @@ and violation rate.
 | 5 | How is the capability system designed? | `Ctx<'req, E>` is parameterised by the contract, and checked in an **extension trait**'s where clause | [`capability-system.md`](./capability-system.md) |
 | 6 | How is a GET's read-only guarantee proved? | `Endpoint<Mutates=(), Creates=(), Deletes=()>` plus **a compile-time assertion from the derive** (a blanket impl cannot do it) | [`rust-type-model.md`](./rust-type-model.md) |
 | 8 | How is the architecture contract enforced? | Put `Self::Owner: Includes<User>` in the method's where clause (`Includes`'s subject is the endpoint type — [ADR-0001](../adr/0001-includes-is-implemented-on-the-endpoint.md)) | [`architecture-contract.md`](./architecture-contract.md) |
-| Q-A | Whether to generate the contract from the implementation | **Keep both and make the difference the detector.** Type enforcement = upper bound (bypasses); generation = lower bound (lies). Over-declaration fails CI. Scope is `handle` only in the First PoC. ⚠️ **REOPENED 2026-08-16** — T-M1-07 (#37) measured the premise and it does not hold: three of five keys recover, and the scan is neither complete nor sound. | [`effect-inference.md`](./effect-inference.md) |
+| Q-A | Whether to generate the contract from the implementation | **Keep both mechanisms; the difference is a detector with known blind spots.** Type enforcement = upper bound (bypasses). Generation was to give a **lower bound** (lies) and does not — ⚠️ **REOPENED 2026-08-16** by T-M1-07 (#37): three of five keys recover and the scan is neither complete nor sound. **Settled 2026-08-18 by #42 / [ADR-0014](../adr/0014-syntactically-present-replaces-observed.md)**: the key is `syntactically_present`, **there is no lower bound**, over-declaration **warns** rather than fails CI, and the scope is calls spelled `ctx.<accessor>()` in **one item** — not all of `handle`. | [`effect-inference.md`](./effect-inference.md) |
 | 10 | Is a proc macro alone enough? | Three defence layers (macro / equality bound / trait bound) **plus a build-time token scan** (added by the Q-A decision; a fourth mechanism producing the difference between declaration and implementation, outside the proc macro). A custom linter is needed only for escape hatches and raw SQL | [`diagnostics.md`](./diagnostics.md) |
 
 ### Technical constraints settled by compiling
@@ -287,9 +289,10 @@ Generating the trait definition should be moved ahead of generating the impl.
 ### ⚠️ Detecting over-declaration — **was marked solved by the Q-A decision; reopened by T-M1-07**
 
 A declared but unused capability is not an error (a consequence of the contract
-being an upper bound). **`declared_ceiling \ observed_effects` is the detector** —
+being an upper bound). **`declared_ceiling \ syntactically_present` is the detector** —
 Q-A (2026-08-15) positioned taking that difference as the main purpose rather than
-a by-product. CI fails on it.
+a by-product. **CI warns on it**, and does not fail: #37 measured false positives in
+both directions, and #42 / ADR-0014 records what the difference can and cannot see.
 [`effect-inference.md`](./effect-inference.md) §Decision (Q-A).
 
 ### Detecting database mutations

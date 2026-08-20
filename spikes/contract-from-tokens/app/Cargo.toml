@@ -15,5 +15,7 @@ mac.workspace = true
 [features]
 # Declared and never enabled — V2 needs a cfg that is real but off.
 never-enabled = []
+# D2: does `if false` relieve the declaration obligation? (#42 defect 1)
+d2-dead-code-still-declared = []
 r1-observe-on-a-struct = []
 r2-helper-in-the-observed-block = []

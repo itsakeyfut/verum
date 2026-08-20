@@ -537,3 +537,77 @@ pub struct NotAnImpl;
 // The `const _` block was therefore a check that could not fail, which this
 // project's own rule says is not a check. It is gone rather than kept for
 // decoration.
+
+// ---------------------------------------------------------------------------
+// D1 / D2 — #42's defect 1: dead code is counted by BOTH bounds.
+//
+// This is the probe #42's requirement 4 asks for, and it is deliberately two
+// rows, because the claim has two halves and only one of them can be measured
+// with this crate's `Ctx`.
+//
+// Note what it is NOT. V2 above measures a `#[cfg]`-gated statement — code that
+// is **never compiled**, which is the *unsoundness*. Dead code is compiled,
+// type-checked, and never **run**. The two are different mechanisms and only one
+// of them is also required to be declared.
+// ---------------------------------------------------------------------------
+
+/// **D1 — the lower-bound half.** An effect written inside `if false { .. }`
+/// appears in the emitted JSON exactly as an unconditional one does. The scan
+/// reads tokens; `if false` is a token.
+pub struct DeadCode;
+
+#[observe]
+impl Handler for DeadCode {
+    fn handle(
+        &self,
+        _req: UpdateUserRequest,
+        ctx: Ctx,
+    ) -> impl Future<Output = Result<UserView>> + Send {
+        async move {
+            // Never executed. Still scanned, still required to be declared (D2).
+            if false {
+                ctx.events().emit(UserUpdated)?;
+            }
+            Ok(UserView)
+        }
+    }
+}
+
+/// **D2 — the upper-bound half**, which this crate's `Ctx` cannot show: it carries
+/// no effect-set parameter, so there is no `Has` bound to fail. Modelled with the
+/// minimal shape instead, gated so the row can assert the rejection.
+///
+/// The point: `if false` does **not** relieve the declaration obligation. So a
+/// declared-but-dead effect satisfies the upper bound *and* appears in the lower
+/// one — and `declared \ observed ≠ ∅` sees nothing to report. The CI gate cannot
+/// distinguish "declared and dead" from "declared and live".
+#[cfg(feature = "d2-dead-code-still-declared")]
+pub mod dead_code_upper_bound {
+    use core::marker::PhantomData;
+
+    pub struct Here;
+    pub struct MutateEmail;
+    pub struct MutateName;
+
+    pub trait Has<E, I> {}
+    impl<H, T> Has<H, Here> for (H, T) {}
+
+    pub struct Repo<M>(PhantomData<fn() -> M>);
+    impl<M> Repo<M> {
+        pub fn set_email<I>(&self)
+        where
+            M: Has<MutateEmail, I>,
+        {
+        }
+    }
+
+    /// Declares `MutateName` only.
+    type Declared = (MutateName, ());
+
+    pub fn handler(repo: &Repo<Declared>) {
+        if false {
+            // `E0277`: unreachable code still has to satisfy the bound.
+            repo.set_email();
+        }
+    }
+}

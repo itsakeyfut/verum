@@ -231,7 +231,7 @@ The AI Context states that `reads` is metadata only for now.
       "level": "upper_bound_checked",
       "scope": "handle_via_ctx",
       "voided_by": [
-        "domain_repr", "domain_swap", "repository_impl", "service_body",
+        "domain_repr", "domain_swap", "repository_impl", "unscanned_effect",
         "middleware", "constructor_body", "malformed_set",
         "upsert_granularity", "event_subscriber"
       ]
@@ -241,6 +241,13 @@ The AI Context states that `reads` is metadata only for now.
 ```
 
 `reads` is promoted to `upper_bound_checked` in the Full PoC.
+
+> **`reads` is upper-bound-**only**, permanently** — #42 /
+> [ADR-0014](../adr/0014-syntactically-present-replaces-observed.md). Generation
+> recovers what is spelled `ctx.<accessor>()`; a read is `user.name()` or
+> `UserView::from(user)` and goes nowhere near `ctx`. So there is no mechanism that
+> could give `reads` a lower bound, now or after the two causes #37 measured are
+> fixed. The promotion above raises the ceiling; nothing raises a floor.
 
 > The value `type_checked` is never used. A contract is an upper-bound check —
 > implementation ⊆ contract — not a bidirectional verification. See

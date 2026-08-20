@@ -437,7 +437,7 @@ fn contract_json_should_include_enforcement_and_boundaries() {
 - `condition_verified: false`
 - `model_fit`
 - `escape_hatches` — `"unknown"`, not `[]`
-- `observed.deferred` — `"unknown"`, not `[]`
+- `syntactically_present.deferred` — `"unknown"`, not `[]`
 
 **Fail the test if the value `type_checked` ever appears.** The contract is an
 upper-bound check, not a bidirectional one.

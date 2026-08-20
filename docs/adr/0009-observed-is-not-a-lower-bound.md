@@ -1,11 +1,23 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-16
+updated: 2026-08-18
 decision-makers: itsakeyfut
 enforcement-level: none
 ---
 
 # `observed` is not a lower bound, and Q-A is reopened on the measurement
+
+> **The key this record names was renamed.** `observed` became
+> `syntactically_present` in [ADR-0014](./0014-syntactically-present-replaces-observed.md),
+> which decides the semantics this record deferred to #42. **The title and the text
+> below keep the old name deliberately** — `observed` is what was reopened, and
+> rewriting the record would erase what was actually decided. The same treatment #34
+> gave the already-published issue bodies.
+>
+> The three judgements this record hands to **#18** were orphaned when #18 closed.
+> ADR-0014 picks all three up: the CI gate's value, the `scope` / `kind`
+> replacements, and the semantics half of Q-A's shape.
 
 ## Context and Problem Statement
 
@@ -80,7 +92,10 @@ The conditional split survives, including nesting. `calls` and field-level
   system refuses narrowing only for keys at `upper_bound_checked`, so a false
   report on **`reads` has no compiler backstop at all**.
 * `scope: "handle_only"` and `kind: "service_body"` now overstate what they name.
-  Replacements are tracked on ledger path 22, not decided here.
+  Replacements are tracked on ledger path 22, not decided here. **Decided by
+  [ADR-0014](./0014-syntactically-present-replaces-observed.md)**: they are now
+  `"ctx_spelled_same_item"` and `"unscanned_effect"`. The old values are kept in
+  this line because they are what this record measured.
 * The CI gate argued for in §When over-declaration appears was justified on the
   assumption of no false positives. That assumption is gone; whether the gate is
   still proportionate is #18's.

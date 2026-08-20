@@ -26,18 +26,19 @@ Format: [MADR 4.0](https://adr.github.io/madr/). Copy
 | [0006](./0006-runtime-sealed-token.md) | What `Runtime<Sealed>` is, and whether a sealed token closes the god-mode constructor | **proposed** | `spikes/ctx-lifetime-rpitit` A0 — visibility blocks *construction* only; a public erased-handler entry point still supplies a live `Ctx` |
 | [0007](./0007-field-trait-shape.md) | What `Field<D>` declares, and what forging it would buy | **proposed** | **nothing** — the seal has no trait to match |
 | [0008](./0008-guarantees-carry-scope-and-voiding-paths.md) | Every AI Context key that claims a guarantee carries its scope and the paths that void it | accepted | `spikes/doc-code-blocks/check_json.py` — plus an adversarial re-read that no checker can replace |
-| [0009](./0009-observed-is-not-a-lower-bound.md) | `observed` is not a lower bound, and Q-A is reopened on the measurement | proposed | `spikes/contract-from-tokens/` — probes **V1** and **V2**, which a sound or complete scanner would turn red |
+| [0009](./0009-observed-is-not-a-lower-bound.md) | `observed` is not a lower bound, and Q-A is reopened on the measurement | accepted | `spikes/contract-from-tokens/` — probes **V1** and **V2**, which a sound or complete scanner would turn red. ⚠️ The key it names was renamed to `syntactically_present` by [ADR-0014](./0014-syntactically-present-replaces-observed.md) — this row keeps `observed` because that was the name when the reopening was decided |
 | [0010](./0010-domain-constructor-confined-by-module-privacy.md) | The Domain constructor is confined to a macro-owned module, not to the user's | accepted | `spikes/domain-opacity-sqlx/run.sh` — **P31** (`E0624`), **P32** (crate root), **P34** (`as_repr`), **P35** (the `Repr`); P31 mutation-verified. **P33 / P36 are the counter-evidence rows and must pass** |
 | [0011](./0011-domain-is-an-attribute-macro.md) | The Domain macro is an attribute, `#[domain]`, not `#[derive(Domain)]` | accepted | `spikes/domain-opacity-sqlx/run.sh` — **P38** (`E0255`, a derive cannot emit ADR-0010's shape), **P39** (an attribute can), **P39b** (`E0624`, the confinement survives). Plus the widened `imports` guard, planted and confirmed red |
 | [0012](./0012-spawn-takes-a-payload-not-a-context.md) | `ctx.spawn` takes a **payload**, not a context | accepted | `spikes/ctx-lifetime-rpitit` F1–F6 — the specified shape is `E0521`, the owned form compiles but can be re-spawned, and the chosen form is `E0521` against both re-spawning and payload smuggling. ⚠️ No fixture in `crates/verum` yet — there is no `Ctx` there; relocated to #60 / `T-M3-02` |
 | [0013](./0013-includes-is-a-blanket-impl.md) | `Includes` is a blanket impl, so its seal never becomes derive-facing | accepted | `spikes/seal-after-m2` S1–S5 — the per-domain seal is forged from a downstream crate once M2 exposes it (S2), **and the ledger's own re-verification procedure is green on that tree** (S1). ⚠️ #41's stated reason is refuted by S4; the blanket impl works because the derive stops *naming* the seal. Not implemented in `crates/verum` — needs `Endpoint` (#60) |
+| [0014](./0014-syntactically-present-replaces-observed.md) | `syntactically_present` replaces `observed`, and the lower bound is abandoned | accepted | `spikes/contract-from-tokens` D1/D2 — dead code is counted by **both** bounds (`if false` appears in the scan **and** still needs its `Has` bound), so the CI gate's difference is empty for it. Three names change; the `voided_by` join in `check_json.py` makes the rename mechanical |
 
 > **Statuses live in two places** — an ADR's frontmatter and this row. #34 updated
 > only the frontmatter and #39 repeated it, so before closing an ADR run
 > `command grep -n '<number>' docs/adr/README.md` and check the row, the
 > **By status** line, and any note below.
 
-**By status** — proposed: **0004, 0006, 0007, 0009** · accepted: 0000–0003, 0005, 0008, 0010–0013 · superseded: none
+**By status** — proposed: **0004, 0006, 0007** · accepted: 0000–0003, 0005, 0008–0014 · superseded: none
 
 > **Five `proposed` records, and the codebase relies on all five.** That is the
 > state [ADR-0000](./0000-record-architecture-decisions.md) calls a defect, made

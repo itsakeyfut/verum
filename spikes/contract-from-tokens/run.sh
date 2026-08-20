@@ -125,6 +125,11 @@ echo "=== what the macro cannot be given ==="
 reject R1 "goes on an \`impl\` block" check -p app --features r1-observe-on-a-struct
 # R2 is why P7 is structural rather than incidental.
 reject R2 "E0407"                    check -p app --features r2-helper-in-the-observed-block
+# D2 — #42 defect 1's other half. `if false` does NOT relieve the declaration
+# obligation, so a declared-but-dead effect satisfies the upper bound AND appears
+# in the lower one: `declared \ observed` is empty and the CI gate reports nothing.
+# This crate's `Ctx` carries no effect set, so the minimal `Has` shape stands in.
+reject D2 "E0277"                    check -p app --features d2-dead-code-still-declared
 echo
 
 OBSERVED="$("${CARGO[@]}" run -q -p app --bin observed 2>/dev/null)"
@@ -132,51 +137,58 @@ OBSERVED="$("${CARGO[@]}" run -q -p app --bin observed 2>/dev/null)"
 echo "=== what the macro recovers, and what it invents — exact output ==="
 echo "  mutates / when-scope / after_commit / P4 blindness"
 expect P1-4   UpdateUser      \
-'{"endpoint":"UpdateUser","fields":["User::name@top","User::email@when:EmailChanged"],"reads":["User@top"],"creates":["AuditLog@top"],"emits":["EmailVerificationRequested@when:EmailChanged","UserUpdated@top"],"calls":["Email@after_commit"],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"UpdateUser","fields":["User::name@top","User::email@when:EmailChanged"],"reads":["User@top"],"creates":["AuditLog@top"],"emits":["EmailVerificationRequested@when:EmailChanged","UserUpdated@top"],"calls":["Email@after_commit"],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  control: the same emit written inline IS seen"
 expect P4c    SneakyControl   \
-'{"endpoint":"SneakyControl","fields":[],"reads":[],"creates":[],"emits":["HiddenEvent@top"],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"SneakyControl","fields":[],"reads":[],"creates":[],"emits":["HiddenEvent@top"],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  the escape hatch is visible though it is not an effect"
 expect P5     EscapeHatch     \
-'{"endpoint":"EscapeHatch","fields":[],"reads":[],"creates":[],"emits":[],"calls":[],"escapes":["User::from_repr@top"],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"EscapeHatch","fields":[],"reads":[],"creates":[],"emits":[],"calls":[],"escapes":["User::from_repr@top"],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  aliasing: reads proves the scan ran; the setter is missed"
 expect P6     Aliased         \
-'{"endpoint":"Aliased","fields":[],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"Aliased","fields":[],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  a helper in a SIBLING impl block"
 expect P7     ViaHelper       \
-'{"endpoint":"ViaHelper","fields":[],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"ViaHelper","fields":[],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  the same helper as a nested fn — VISIBLE, so P7 is placement, not law"
 expect X1     NestedFnHelper  \
-'{"endpoint":"NestedFnHelper","fields":["User::name@top"],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"NestedFnHelper","fields":["User::name@top"],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  macro_rules! expansion — invisible by construction"
 expect M1     MacroExpanded   \
-'{"endpoint":"MacroExpanded","fields":[],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"MacroExpanded","fields":[],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  UFCS, written directly in handle, no indirection"
 expect U1     Ufcs            \
-'{"endpoint":"Ufcs","fields":[],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"Ufcs","fields":[],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  the parameter renamed to cx — everything vanishes"
 expect V1     RenamedCtx      \
-'{"endpoint":"RenamedCtx","fields":[],"reads":[],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"RenamedCtx","fields":[],"reads":[],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  a never-compiled statement APPEARS: not a subset"
 expect V2     CfgGated        \
-'{"endpoint":"CfgGated","fields":[],"reads":[],"creates":[],"emits":["ThisTypeDoesNotExist@top"],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"CfgGated","fields":[],"reads":[],"creates":[],"emits":["ThisTypeDoesNotExist@top"],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  nested when carries BOTH conditions"
 expect W1     NestedWhen      \
-'{"endpoint":"NestedWhen","fields":["User::email@when:EmailChanged+when:AlsoVerified"],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"NestedWhen","fields":["User::email@when:EmailChanged+when:AlsoVerified"],"reads":["User@top"],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
+
+echo "  #42 defect 1 — dead code: BOTH bounds count it"
+# D1, the lower-bound half: `if false` is a token, so the effect appears exactly as
+# an unconditional one does — note `@top`, with no condition tag. Contrast V2 above,
+# which is code never *compiled*; this is code compiled and never *run*.
+expect D1     DeadCode        \
+'{"endpoint":"DeadCode","fields":[],"reads":[],"creates":[],"emits":["UserUpdated@top"],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 
 echo "  the standing control: a constant-emitting macro fails here"
 expect NOOP   Noop            \
-'{"endpoint":"Noop","fields":[],"reads":[],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"handle_only","deferred":"unknown"}'
+'{"endpoint":"Noop","fields":[],"reads":[],"creates":[],"emits":[],"calls":[],"escapes":[],"scope":"ctx_spelled_same_item","deferred":"unknown"}'
 echo
 
 echo "=== summary ==="
@@ -185,7 +197,7 @@ if [[ $fail -gt 0 ]]; then
     exit 1
 fi
 
-EXPECTED_ROWS=15
+EXPECTED_ROWS=17
 if [[ $pass -ne $EXPECTED_ROWS ]]; then
     echo "FATAL: $pass rows ran, expected $EXPECTED_ROWS — a probe line was removed." >&2
     exit 1

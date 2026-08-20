@@ -63,14 +63,15 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
       "level": "upper_bound_checked",
       "scope": "handle_via_ctx",
       "voided_by": [
-        "domain_repr", "domain_swap", "repository_impl", "service_body",
+        "domain_repr", "domain_swap", "repository_impl", "unscanned_effect",
         "middleware", "constructor_body", "malformed_set",
         "upsert_granularity", "event_subscriber"
       ]
     },
-    "observed": {
-      "fields": ["User.name", "User.email"],
-      "scope": "handle_only",
+    "syntactically_present": {
+      "unconditional": ["User.name"],
+      "conditional": { "EmailChanged": ["User.email"] },
+      "scope": "ctx_spelled_same_item",
       "deferred": "unknown"
     }
   },
@@ -86,7 +87,7 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
     "enforcement": {
       "level": "upper_bound_checked",
       "scope": "handle_via_ctx",
-      "voided_by": ["repository_impl", "service_body", "middleware",
+      "voided_by": ["repository_impl", "unscanned_effect", "middleware",
                     "constructor_body", "malformed_set", "event_subscriber"]
     }
   },
@@ -95,7 +96,7 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
     "enforcement": {
       "level": "upper_bound_checked",
       "scope": "handle_via_ctx",
-      "voided_by": ["repository_impl", "service_body", "middleware",
+      "voided_by": ["repository_impl", "unscanned_effect", "middleware",
                     "constructor_body", "malformed_set", "event_subscriber"]
     }
   },
@@ -116,7 +117,7 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
     "enforcement": {
       "level": "upper_bound_checked",
       "scope": "handle_via_ctx",
-      "voided_by": ["repository_impl", "service_body", "middleware",
+      "voided_by": ["repository_impl", "unscanned_effect", "middleware",
                     "constructor_body", "malformed_set", "event_subscriber"]
     }
   },
@@ -132,7 +133,7 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
       "enforcement": {
         "level": "upper_bound_checked",
         "scope": "handle_via_ctx",
-        "voided_by": ["repository_impl", "service_body", "middleware",
+        "voided_by": ["repository_impl", "unscanned_effect", "middleware",
                     "constructor_body", "malformed_set", "event_subscriber"]
       }
     }
@@ -162,7 +163,7 @@ AI Context (JSON)      → the complete form. Zero ambiguity first
         "permanent": false },
       { "kind": "uncapped_read", "detail": "a Domain's Debug and free functions read fields outside the endpoint's reads; no getter shape reaches them, and a Projection narrows only its own Debug (path 23)",
         "permanent": false },
-      { "kind": "service_body", "detail": "the observed_effects scan is neither complete nor sound: it cannot leave its own item, it matches receivers by spelling, and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
+      { "kind": "unscanned_effect", "detail": "the syntactically_present scan is neither complete nor sound: it cannot leave its own item, it matches receivers by spelling, and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
         "permanent": false },
       { "kind": "domain_repr", "detail": "a domain's Repr and constructor are confined to a macro-owned private module (ADR-0010); this holds only while the conversion is an inherent method \u2014 on a public trait it is reachable from every crate (path 21)",
         "location": "src/domain/user.rs", "permanent": false },
@@ -264,60 +265,99 @@ the enforced parts **further than they reach**, which is the harder error to
 notice. Rationale in
 [ADR-0008](../adr/0008-guarantees-carry-scope-and-voiding-paths.md).
 
-#### `observed` — the lower bound (the Q-A decision, 2026-08-15)
+#### `syntactically_present` — what the scan found written (Q-A, 2026-08-15; renamed by ADR-0014)
 
-What `enforcement` answers is only "**nothing else happens**". "**This
-happens**" is a separate field, **generated** by scanning `handle`'s tokens.
+What `enforcement` answers is only "**nothing else happens**". What is **written**
+in the item is a separate field, **generated** by scanning `handle`'s tokens.
 
 ```json
-"observed": { "fields": [...], "scope": "handle_only", "deferred": "unknown" }
+"syntactically_present": {
+  "unconditional": [...],
+  "conditional": { "<ConditionName>": [...] },
+  "scope": "ctx_spelled_same_item",
+  "deferred": "unknown"
+}
 ```
+
+> **It was called `observed` and there is no lower bound.**
+> [ADR-0014](../adr/0014-syntactically-present-replaces-observed.md) renamed it for
+> the same reason `type_checked` is banned and `scope_of_readonly_guarantee` was
+> deleted: a name that asserts more than its mechanism supports gets removed, not
+> annotated. `observed` said the effects were seen to happen. Nothing observed
+> anything — a proc macro read tokens.
+>
+> **Q-A's "leave no lie" half no longer has a mechanism**, only a statement: the gap
+> is recorded in `unverified_boundaries` (`unscanned_effect`, path 22) the way
+> everything types cannot reach is. What generation still earns is this field, the
+> conditional split, and escape-hatch visibility (probe P5).
 
 | Key | Meaning |
 |---|---|
 | `fields` | The effects the scan **found written** inside `handle`. **Generated, never hand-written** |
-| `scope` | How far the scan reached. `"handle_only"` in the First PoC — ⚠️ **the value overstates itself**: T-M1-07 measured that the scan does not cover all of `handle`. It was added so an AI would not misread the lower bound as covering every path, and it now produces a smaller version of that same misreading. Replacement tracked on path 22 |
-| `deferred` | Items escaped via `@service`. A service body is not scanned, so anything appearing here also raises a `service_body` entry in `unverified_boundaries`. **That `kind` now under-describes its own boundary** — T-M1-07 showed most of the misses are inside `handle`, not in a service. Renaming it is tracked on path 22 |
+| `scope` | How far the scan reached. `"ctx_spelled_same_item"` in the First PoC — it names **both** real limits: matched by spelling, and confined to one item. Its predecessor `"handle_only"` claimed all of `handle`, which T-M1-07 measured to be false, so it produced a smaller version of the misreading the field exists to prevent. Renamed by [ADR-0014](../adr/0014-syntactically-present-replaces-observed.md); path 22 records what the scan still misses |
+| `deferred` | Items escaped via `@service`. A service body is not scanned, so anything appearing here also raises a `unscanned_effect` entry in `unverified_boundaries`. **That `kind` now under-describes its own boundary** — T-M1-07 showed most of the misses are inside `handle`, not in a service. Renaming it is tracked on path 22 |
 
-**`observed.fields` is syntactic presence, not execution.** The scan reads
+**The split is about syntax, and says nothing about the condition.**
+`conditional` means the effect is **written inside** a `ctx.when::<C>` scope — #37
+measured that the scan preserves that, nesting included. Whether `C` ever holds is
+`condition_verified`'s business, and it is `false` (`Condition::holds` is user code;
+ledger path 20, permanent). The flat form is what let this file list `User.email`
+unconditionally while `handler-rules.md` performs it inside a `when`.
+
+> **Dead code is counted here *and* by the upper bound — compile-verified.** An
+> effect inside `if false { … }` appears in this field exactly as an unconditional
+> one does (`@top`, no condition tag), **and** it still has to satisfy its `Has`
+> bound: `error[E0277]: the trait bound (MutateName, ()): Has<MutateEmail, _> is not
+> satisfied`. So a declared-but-dead effect is in both sets and the difference the CI
+> gate reads is empty for it. Probes **D1** / **D2** in
+> `spikes/contract-from-tokens/`. This is **not** the same as the `#[cfg]` case
+> (probe V2), which is code never *compiled* and is counted by this field alone.
+
+**`syntactically_present` is syntactic presence, not execution.** The scan reads
 tokens: a `set_email` written inside a `when` block, behind an `if`, or on a path
 that never runs appears here exactly as an unconditional one does. So
-`observed.fields == effective` does **not** mean every listed field changes on
+`syntactically_present.fields == effective` does **not** mean every listed field changes on
 every request — for that, read `conditional` and `condition_verified` (§3).
-Stated because the pair `observed.fields` + the reading rule below is what
+Stated because the pair `syntactically_present.fields` + the reading rule below is what
 produced the belief "name and email are changed, no more and no less", and only
 the "no more" half of that is something this output can support.
 
 **`deferred` emits `"unknown"`, never `[]`.** The `@service` marker is
 self-reported in exactly the way `escape_hatches` is (§7): forget it and a
 service still performs the effect, while the output reads `[]` and no
-`service_body` boundary is raised. An empty array here would claim "nothing was
+`unscanned_effect` boundary is raised. An empty array here would claim "nothing was
 deferred", which is precisely the claim nobody can make.
 
 > The upgrade path is for the token scan to emit **every call it could not
 > follow**, whether or not it is marked — at which point `[]` becomes honest and
-> `@service` supplies only the reason. That depends on #37 (does token scanning
-> recover the contract at all) and on #42, which disputes whether `observed` is a
-> lower bound in the first place. **`observed` is otherwise unchanged here**, so
-> that this file does not prejudge either.
+> `@service` supplies only the reason. #37 measured that token scanning does not
+> recover the contract, and #42 / ADR-0014 settled that there is no lower bound, so
+> this upgrade is the one thing that would make `deferred` an honest `[]`. It needs
+> cause B (matching by spelling) closed first.
 
 **How to read it** — ⚠️ **corrected by T-M1-07 (#37); the earlier rule was
 false.** It said: if `enforcement: upper_bound_checked` and
-`observed.fields == effective` and `deferred` is empty, then **within that
+`syntactically_present.fields == effective` and `deferred` is empty, then **within that
 `scope` the set is exact**. It is not. The scan misses effects that are inside
-`scope: "handle_only"` — a receiver bound to a local, a renamed `ctx` parameter,
+`scope: "ctx_spelled_same_item"` — a receiver bound to a local, a renamed `ctx` parameter,
 a UFCS call — and it reports effects from code that is never compiled. So:
 
-* `observed.fields == effective` means the two agree, **not** that either is
+* `syntactically_present.fields == effective` means the two agree, **not** that either is
   complete.
-* **`observed` is not a lower bound.** It is syntactic presence within one item,
+* **`syntactically_present` is not a lower bound.** It is syntactic presence within one item,
   matched by spelling.
 * The only exactness claim that survives is the upper bound, from
   `enforcement`, with the `scope` and `voided_by` that key carries.
+* **`reads` can never appear here at field granularity, and that is structural.**
+  The scan works because Rule 2 routes effects through `ctx.`; reads do not — they
+  are `user.name()` and `UserView::from(user)`. So `reads` is **upper-bound-only
+  permanently**, not pending a fix: closing cause A or cause B gives the mechanism
+  nothing more to match on. See [ADR-0004](../adr/0004-reads-enforcement-level.md)
+  and [`read-contract.md`](./read-contract.md).
 
 Path 22 records the six measured constructs.
 
-`declared \ observed ≠ ∅` — over-declaration — is failed by CI, so **an
+`declared \ syntactically_present ≠ ∅` — over-declaration — is failed by CI, so **an
 over-declaration does not normally survive into this output.** If one has, look at
 `deferred`. **No `enforcement` value meaning "verified in both directions" is
 created** — the same reason `type_checked` is banned: folding different layers
