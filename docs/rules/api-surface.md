@@ -257,12 +257,27 @@ pub trait Includes<D>: derive_facing::SealedIncludes<D> {}
 The derive emits `impl derive_facing::SealedEndpoint for UserEndpoint {}`. Users
 cannot reach the `private` module, so they cannot write the impl by hand.
 
+> **⚠️ That last sentence is true of `private` and false of `derive_facing`** (#41,
+> measured). A derive-facing seal has to be nameable downstream for generated code to
+> name it, and once it is, the attacker names it too — the forgery compiles. See
+> §The rule applies to the *procedure* below and
+> [ADR-0013](../adr/0013-includes-is-a-blanket-impl.md), which closes path 13 by
+> removing the derive's need to name the seal at all.
+>
 > **Unresolved (found in T-M0-06)**: a proc macro's output is **resolved in the
 > calling crate**, so it cannot reach `pub(crate) mod private`. A derive was
 > written and **E0603** confirmed. "The derive emits it", above, **cannot be
-> implemented as things stand.** M2 will need a `#[doc(hidden)] pub mod __private`
-> re-export, and **that is the moment the seals get weaker**, so settle its shape
-> together with the type-parameter question below.
+> implemented as things stand.** M2 will need to expose the derive-facing seals, and
+> **that is the moment the seals stop working** — not merely get weaker (#41's S2).
+> Settle the shape together with the type-parameter question below.
+>
+> Two forms are available and they are not equivalent, both measured in #41:
+> re-exporting the **module** (`pub use sealed::derive_facing as __private;`) is
+> **`E0365`** — a `pub(crate)` module cannot be re-exported — so that form requires
+> declaring the module `pub`, which exposes whatever is added to it later.
+> Re-exporting the **traits item-wise** into a fresh `#[doc(hidden)] pub mod __private`
+> compiles with `derive_facing` still `pub(crate)`, and is **strictly narrower**: only
+> the named traits escape. Prefer the item-wise form; #60 decides.
 
 ### Why this is mandatory
 
@@ -419,6 +434,32 @@ So every bound that carries enforcement goes **on the seal** — a bound on the
 trait declaration costs the call site. A difference may be left deliberately only
 when **the difference set can be proved harmless and that proof exists as a
 test.**
+
+##### The rule applies to the *procedure* that checks a seal, not only to the seal
+
+#41 found the fourth instance of this class, and it was not in an implementation.
+`unverified-boundaries.md` carried a re-verification procedure for path 13 —
+*"confirm `impl Includes<undeclared>` is E0277"* — and that procedure was **green on
+a tree where the forgery compiled**, because it exercised only the trait impl.
+Measured: `spikes/seal-after-m2/`, probes S1 and S2.
+
+**The attacker model, stated once so it is not re-derived wrongly:**
+
+> **The attacker can write every impl the derive can write.** Proc-macro output is
+> syntactically indistinguishable from hand-written code, so an obligation a derive
+> discharges downstream, a human discharges downstream.
+
+A procedure that does not exercise **the seal impl as well** tests nothing about a
+public seal. Whenever a seal has to be exposed for generated code to name it, the
+only closures that survive are ones where **the derive never names the seal at all** —
+which is what [ADR-0013](../adr/0013-includes-is-a-blanket-impl.md) does for
+`Includes` by making it a blanket impl.
+
+> **And do not generalise "a blanket impl closes forgery" from that.** Probe S4
+> refutes the coherence reasoning: rustc judges a blanket impl and a competing
+> specific impl **disjoint** exactly when the blanket's obligation is unsatisfiable —
+> which is exactly the case an attacker wants. The blanket impl helps because it moves
+> the seal from derive-facing to structural, not because coherence rejects anything.
 
 **No difference is allowed for a trait with a `type Out`.** A predicate trait's
 head impl (`Has`) pins the very fact it asserts — `H` must be `Self`'s head — so
