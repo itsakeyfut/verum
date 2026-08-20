@@ -129,6 +129,16 @@ that a `Domain`'s `Debug` and free functions taking `&Domain` read every field
 with no capability, and no getter shape reaches them. Recorded in the ledger
 rather than left to make `reads` look broader than it is.
 
+**And it is upper-bound-only permanently, for a structural reason** (#42,
+[ADR-0014](./0014-syntactically-present-replaces-observed.md)). Generation recovers
+what is written through `ctx.` because `handler-rules.md` Rule 2 routes effects
+there. **Reads do not go through `ctx.`** — they are `user.name()` and
+`UserView::from(user)`. So `syntactically_present` can never carry field-level
+`reads`, and closing either of the two causes #37 measured gives the mechanism
+nothing more to match on. This is a property of the mechanism, not a gap in it:
+promoting `reads` to `upper_bound_checked` in the Full PoC raises the *ceiling*
+half and leaves the other half permanently absent.
+
 ### Consequences
 
 * Good, because the AI Context does not overstate. #15 came back "yes, but", and

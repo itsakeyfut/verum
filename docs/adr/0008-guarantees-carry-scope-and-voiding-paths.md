@@ -27,7 +27,7 @@ produced five conclusions, all false. The pattern in them is specific:
 
 > **The lies come from the mechanisms added in order to be honest.**
 
-`observed` was added to supply a lower bound and now reads as "exactly these
+`observed` (renamed `syntactically_present` by ADR-0014) was added to supply a lower bound and now reads as "exactly these
 fields change". `effective` was added to expand the declaration and, on the
 `effects` object, expands nothing — it is a lookup on the HTTP verb. The
 `forbidden` note was added to explain a weak enforcement level and instead
@@ -167,7 +167,7 @@ That remains a human pass, run on every change to the schema.
 ## More Information
 
 * #38 — the issue, and the five measured false beliefs
-* #42 — disputes whether `observed` is a lower bound. `observed` is deliberately
+* #42 — decided it is not, and renamed it `syntactically_present` (ADR-0014). It is deliberately
   left alone here so this record does not prejudge it
 * #37 — the spike on whether token scanning recovers the contract; the upgrade
   path for `deferred` depends on it

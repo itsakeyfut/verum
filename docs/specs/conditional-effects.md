@@ -437,7 +437,7 @@ under consideration. Beyond that, compose conditions.
       "level": "upper_bound_checked",
       "scope": "handle_via_ctx",
       "voided_by": [
-        "domain_repr", "domain_swap", "repository_impl", "service_body",
+        "domain_repr", "domain_swap", "repository_impl", "unscanned_effect",
         "middleware", "constructor_body", "malformed_set",
         "upsert_granularity", "event_subscriber"
       ]
@@ -454,7 +454,7 @@ under consideration. Beyond that, compose conditions.
       "enforcement": {
         "level": "upper_bound_checked",
         "scope": "handle_via_ctx",
-        "voided_by": ["repository_impl", "service_body", "middleware",
+        "voided_by": ["repository_impl", "unscanned_effect", "middleware",
                     "constructor_body", "malformed_set", "event_subscriber"]
       }
     }

@@ -308,7 +308,7 @@ pub fn observe(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let json = format!(
         concat!(
             r#"{{"endpoint":"{}","fields":{},"reads":{},"creates":{},"emits":{},"#,
-            r#""calls":{},"escapes":{},"scope":"handle_only","deferred":"unknown"}}"#
+            r#""calls":{},"escapes":{},"scope":"ctx_spelled_same_item","deferred":"unknown"}}"#
         ),
         name,
         json_array(&scan.fields),

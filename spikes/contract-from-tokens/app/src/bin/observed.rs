@@ -21,6 +21,7 @@ fn main() {
         ("NestedFnHelper", __VERUM_OBSERVED_NESTED_FN_HELPER),
         ("Ufcs", __VERUM_OBSERVED_UFCS),
         ("MacroExpanded", __VERUM_OBSERVED_MACRO_EXPANDED),
+        ("DeadCode", __VERUM_OBSERVED_DEAD_CODE),
     ] {
         println!("{name}\t{json}");
     }

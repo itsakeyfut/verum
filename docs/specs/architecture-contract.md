@@ -3,6 +3,17 @@
 Constraining the handler → service → repository path with types and static
 analysis rather than convention.
 
+> **⚠️ That path is not the First PoC's recommended shape** (#42,
+> [ADR-0014](../adr/0014-syntactically-present-replaces-observed.md)). The First
+> PoC's generation scans **one item**, so following this path as written empties
+> `syntactically_present` and puts everything in `deferred` — which pushes
+> `@service` onto every endpoint and makes the escape hatch the main road. The
+> handler-only shape is what the First PoC constrains, and §The service layer below
+> already records this file's own position on services as **undecided**;
+> [`evaluation.md`](./evaluation.md) measured the 29%-shorter result *because the
+> service layer disappeared*. This file's opening sentence describes the eventual
+> target, not what is enforced today.
+
 Related: [`capability-system.md`](./capability-system.md),
 [`semantic-endpoint.md`](./semantic-endpoint.md).
 

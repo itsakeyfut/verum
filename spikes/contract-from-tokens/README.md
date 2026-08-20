@@ -146,6 +146,8 @@ first pass presented P6 as author discipline, which was wrong.
 | **X1** | the same helper as a nested `fn` | **visible** — which is why P7 is placement, not law |
 | **V2** | a `#[cfg]`-gated statement, never compiled | **appears in the output** |
 | NOOP | an empty `handle` | empty — the standing control |
+| **D1** | an effect inside `if false { .. }` | **present**, as `@top` — identical to an unconditional one |
+| **D2** | does `if false` relieve the declaration obligation? | fail `E0277` — it does not |
 
 W1 aside, everything from V1 down was found in Tier-2 review, not in the issue's
 list of five.
@@ -268,3 +270,23 @@ not a check, so they are gone and the header says what actually holds.
 
 The common shape: the first pass probed one direction of each question and wrote
 the conclusion as if it had probed both.
+
+### #42's defect 1 — dead code is counted by BOTH bounds (D1 / D2)
+
+`if false { ctx.events().emit(UserUpdated)?; }` appears in the emitted JSON as
+`"emits":["UserUpdated@top"]` — **`@top`, with no condition tag**, exactly as an
+unconditional effect does. And it is still *required* to be declared: the minimal
+`Has` shape in `dead_code_upper_bound` gives `E0277` when the effect is not in the
+declared set, `if false` notwithstanding.
+
+So a declared-but-dead effect is in **both** sets, and
+`declared \ syntactically_present` is empty for it. **The CI gate cannot separate
+"declared and dead" from "declared and live"** — which is why #42 / ADR-0014 turned
+it into a warning and stated what it *can* catch (a declared effect nowhere written
+in the item).
+
+**This is not V2.** V2 is code never *compiled* — the unsoundness, counted by the
+scan alone. Dead code is compiled, type-checked, and never *run*, and counted by
+both. Two probes because two halves, and this crate's `Ctx` carries no effect set,
+so D2 uses the minimal shape rather than the real one.
+

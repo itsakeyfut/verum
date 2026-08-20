@@ -59,10 +59,14 @@ NEVER_EMPTY = ("voided_by", "escape_hatches", "deferred")
 # (`unconditional.emits` / `calls`, and the `conditional[]` entry in
 # `conditional-effects.md`). Both were found by hand; this rule finds them.
 CLAIMS = {"fields", "domains", "emits", "calls"}
-# `observed` is the token scan's result rather than a declaration, and carries its
-# own `scope`. Named explicitly because a sample may show it on its own, with no
-# enclosing `mutates` to inherit enforcement from.
-CLAIMS_EXEMPT = {"observed"}
+# `syntactically_present` is the token scan's result rather than a declaration, and
+# carries its own `scope`. Named explicitly because a sample may show it on its own,
+# with no enclosing `mutates` to inherit enforcement from.
+#
+# It was called `observed` until ADR-0014. This line is why the rename could not be
+# half-done: with the old name here the checker demanded an `enforcement` object on
+# the new key and reported it, which is how the incomplete rename surfaced.
+CLAIMS_EXEMPT = {"syntactically_present"}
 
 
 def fences(root):

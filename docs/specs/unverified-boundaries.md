@@ -447,7 +447,7 @@ Reproduce: `spikes/reads-getter-enforcement/` (`bash run.sh`). Decision in
 | 19 | Bypassing field granularity with `creates` + `deletes` (an upsert) — `kind: upsert_granularity` | The derive rejects declaring both for one domain / `create` takes new IDs only | **Deferred (stated)** |
 | 20 | `Condition::holds` unlocks everything by returning `true` | **Impossible in principle** | **Permanently stated** |
 | 23 | **`Debug` / `Serialize` / a free function reads a field the endpoint did not declare in `reads`** — `kind: uncapped_read` | Capability-check the getters (measured to work) and accept that these routes are outside them. A `Projection`'s **own** derived `Debug` does narrow to the declared set (#15, P4), but the `Domain` value still exists and its `Debug` and any free function taking `&Domain` reach every field | **Stated** (measured, #15) |
-| 22 | **The `observed_effects` scan is neither complete nor sound.** *(a)* It cannot leave the item it is attached to — a free associated function taking `&ctx`, a helper in a sibling `impl`, and **an effect produced by a `macro_rules!` expansion** (the last is unreachable even with cross-item analysis, since the macro may come from another crate). *(b)* Within the item it matches by **spelling** — the handler parameter named anything but `ctx` voids every key at once; `let repo = ctx.users()` and UFCS are missed. *(c)* It runs **before cfg-stripping**, so it reports effects from code that is never compiled | (a) annotate every effect-carrying item and take the transitive closure at build time (a future form); (b) is closable in the scanner and at layer 1; (c) has no fix — the tokens are all there is. **`scope: "handle_only"` overstates (a) and says nothing about (b) or (c)** and needs replacing | **Stated** (Q-A / 2026-08-15; **rewritten by T-M1-07 / #37**, compile-verified. Enumeration is of *observed* classes, not a census) |
+| 22 | **The `syntactically_present` scan is neither complete nor sound.** *(a)* It cannot leave the item it is attached to — a free associated function taking `&ctx`, a helper in a sibling `impl`, and **an effect produced by a `macro_rules!` expansion** (the last is unreachable even with cross-item analysis, since the macro may come from another crate). *(b)* Within the item it matches by **spelling** — the handler parameter named anything but `ctx` voids every key at once; `let repo = ctx.users()` and UFCS are missed. *(c)* It runs **before cfg-stripping**, so it reports effects from code that is never compiled | (a) annotate every effect-carrying item and take the transitive closure at build time (a future form); (b) is closable in the scanner and at layer 1; (c) has no fix — the tokens are all there is. **`scope: "ctx_spelled_same_item"` overstates (a) and says nothing about (b) or (c)** and needs replacing | **Stated** (Q-A / 2026-08-15; **rewritten by T-M1-07 / #37**, compile-verified. Enumeration is of *observed* classes, not a census) |
 | 25 | **An external effect fires before the commit** — `handler-rules.md` Rule 4's ordering ("send the mail *after* the transaction") is a convention, not a type | **Not provided in the First PoC.** The designed mechanism — issue the effect capability only inside `ctx.after_commit`, scoped the way `when` is — needs a transaction boundary, and that is not designed ([`research-questions.md`](./research-questions.md)) | ⚠️ **Stated, not enforced.** `'req` (path 24) stops a handle leaving the request; it does not order effects *within* it. Rule 4's sample code is written in the correct order because Verum supplies the template an AI imitates — **that is the whole of the mechanism today**, and this row is what stops it reading as a guarantee. Recorded by #39, which closed path 24 and found Rule 4 resting on it |
 
 ---
@@ -613,8 +613,8 @@ An unchecked boundary is **always** emitted in the AI Context.
         "permanent": true
       },
       {
-        "kind": "service_body",
-        "detail": "the observed_effects scan is neither complete nor sound: it cannot leave its own item (free functions, sibling impls, macro expansions), it matches receivers by spelling (a renamed ctx parameter voids every key), and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
+        "kind": "unscanned_effect",
+        "detail": "the syntactically_present scan is neither complete nor sound: it cannot leave its own item (free functions, sibling impls, macro expansions), it matches receivers by spelling (a renamed ctx parameter voids every key), and it runs before cfg-stripping so it reports effects from code that is never compiled (path 22)",
         "permanent": false
       }
     ]
@@ -664,7 +664,7 @@ what has been found, so a *rising* count is a review working, not a regression.
 > **`forged_endpoint` (12)** / **`forged_field` (14)**.
 > non-permanent 9 = `middleware` (16) / `event_subscriber` (15) /
 > `repository_impl` (17) / `constructor_body` (18) / `upsert_granularity` (19) /
-> `domain_repr` (21) / `malformed_set` (14f) / `service_body` (22) /
+> `domain_repr` (21) / `malformed_set` (14f) / `unscanned_effect` (22) /
 > `uncapped_read` (23).
 >
 > **Paths 12 and 14 went from 3 to 5 permanent in #41.** Both were "Closed in the
